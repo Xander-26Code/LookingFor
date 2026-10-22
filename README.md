@@ -1,18 +1,36 @@
-# LookingFor
+<div align="center">
+  <img src="assets/readme/hero.png" alt="LookingFor home page" width="100%">
+  <h1>LookingFor</h1>
+  <p><strong>Rediscover what you starred. Find what comes next.</strong></p>
+  <p><em>AI-assisted GitHub repository discovery for people with a very full Stars list.</em></p>
+</div>
 
-**An AI-assisted way to rediscover GitHub repositories you already love — and find the next ones.**
+<div align="center">
+  <a href="https://github.com/Xander-26Code/LookingFor/stargazers"><img src="https://img.shields.io/github/stars/Xander-26Code/LookingFor?style=flat&logo=github" alt="GitHub stars"></a>
+  <a href="https://github.com/Xander-26Code/LookingFor/forks"><img src="https://img.shields.io/github/forks/Xander-26Code/LookingFor?style=flat&logo=github" alt="GitHub forks"></a>
+  <img src="https://img.shields.io/badge/Python-3.13-blue?style=flat&logo=python" alt="Python 3.13">
+  <img src="https://img.shields.io/badge/NiceGUI-3.18-4b8bbe?style=flat" alt="NiceGUI 3.18">
+  <img src="https://img.shields.io/badge/DeepSeek-API-4d6bfe?style=flat" alt="DeepSeek API">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="MIT License"></a>
+</div>
 
-LookingFor connects to your GitHub account, reads the repositories you have starred, and turns them into an interest profile used to search for related open-source projects. It is built for people whose Stars list has become a small, messy map of their curiosity.
-
-[Live beta](https://47-79-237-57.sslip.io) · [Deployment guide](DEPLOYMENT.md) · [中文说明](#中文说明)
+<div align="center">
+  <a href="https://47-79-237-57.sslip.io"><strong>Live beta</strong></a>
+  ·
+  <a href="DEPLOYMENT.md">Deployment guide</a>
+  ·
+  <a href="#中文说明">中文说明</a>
+</div>
 
 > The live URL is a temporary beta address. A custom domain is planned.
 
 ---
 
-## Overview
+## 🎯 Overview
 
-Most repository discovery tools start from a search box. LookingFor starts from **what you already saved**.
+> Most repository discovery tools start from a search box. LookingFor starts from **what you already saved**.
+
+LookingFor connects to your GitHub account, reads the repositories you have starred, and turns them into an interest profile used to search for related open-source projects. It is built for people whose Stars list has become a small, messy map of their curiosity.
 
 1. Sign in with GitHub.
 2. Sync your starred repositories.
@@ -24,7 +42,24 @@ The app is deliberately a single long-running Python service: NiceGUI for the UI
 
 ---
 
-## Features
+## 🎬 Demo
+
+<div align="center">
+  <a href="assets/readme/demo.mp4">
+    <img src="assets/readme/demo.gif" alt="LookingFor demo: exploring repositories by interest" width="100%">
+  </a>
+  <p><a href="assets/readme/demo.mp4">▶ Watch the full 25-second demo (MP4)</a></p>
+</div>
+
+<p align="center">
+  <img src="assets/readme/search.jpg" alt="Search results grouped by batch" width="49%">
+  <img src="assets/readme/batch.jpg" alt="A new batch with New badges" width="49%">
+</p>
+<p align="center"><sub>Search results grouped by batch · New discoveries marked “New”</sub></p>
+
+---
+
+## ✨ Features
 
 - **GitHub OAuth login** — sign-in is required; there is no anonymous mode.
 - **Star sync** — imports the authenticated user's starred repositories, with per-user isolation.
@@ -40,7 +75,7 @@ The app is deliberately a single long-running Python service: NiceGUI for the UI
 
 ---
 
-## Architecture
+## 🧱 Architecture
 
 ```mermaid
 flowchart LR
@@ -56,7 +91,7 @@ Analysis is executed as an independent background job. Refreshing or closing a p
 
 ---
 
-## Tech stack
+## 🧰 Tech stack
 
 | Layer | Technology |
 |---|---|
@@ -69,7 +104,7 @@ Analysis is executed as an independent background job. Refreshing or closing a p
 
 ---
 
-## Quick start
+## 🚀 Quick start
 
 ### Prerequisites
 
@@ -146,7 +181,7 @@ Open <http://127.0.0.1:8080>, connect GitHub, and sync your Stars.
 
 ---
 
-## Docker deployment
+## ☁️ Docker deployment
 
 The repository includes a single-host deployment: the app, Redis, and Caddy (automatic HTTPS).
 
@@ -184,7 +219,7 @@ More detail: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
-## Usage
+## 🧭 Usage
 
 1. Open the home page and choose **Connect GitHub**.
 2. Authorize the GitHub App and wait for the star sync to finish.
@@ -207,7 +242,7 @@ Important routes:
 
 ---
 
-## Configuration
+## ⚙️ Configuration
 
 | Variable | Required | Description |
 |---|---|---|
@@ -229,7 +264,7 @@ Never commit `.env`, `lookingfor.db`, `.nicegui`, or API keys.
 
 ---
 
-## How analysis and search behave
+## 🔍 How analysis and search behave
 
 - Repository fields are compacted before sending them to the model: description up to 300 characters, up to 8 topics at 40 characters each, compact JSON.
 - Each model batch is kept under 120,000 characters. Up to 6 batches are allowed; beyond that, a representative sample of about 600 repositories is used.
@@ -241,7 +276,7 @@ Never commit `.env`, `lookingfor.db`, `.nicegui`, or API keys.
 
 ---
 
-## Data and privacy
+## 🔐 Data and privacy
 
 - Each user has a row in SQLite plus a star snapshot and one analysis result.
 - GitHub tokens are stored server-side in NiceGUI session storage; they are never sent to the browser page.
@@ -252,7 +287,7 @@ Never commit `.env`, `lookingfor.db`, `.nicegui`, or API keys.
 
 ---
 
-## Tests
+## 🧪 Tests
 
 ```bash
 python3 -m unittest discover -s tests
@@ -262,7 +297,7 @@ The suite covers OAuth/session behavior, analysis deduplication and batching, in
 
 ---
 
-## Project structure
+## 📁 Project structure
 
 ```text
 main.py             Routes, OAuth, analysis UI, search UI, health check
@@ -284,17 +319,16 @@ Caddyfile           Automatic HTTPS reverse proxy
 
 ---
 
-## Roadmap / known gaps
+## 🗺️ Roadmap / known gaps
 
 - [ ] Add a beta allowlist to control model spend before sharing the link broadly.
 - [ ] Encrypt GitHub tokens and refresh tokens at rest.
-- [ ] Add a screenshot or short demo GIF to this README.
 - [ ] Switch the live demo from the temporary `sslip.io` address to `repofind.click`.
 - [ ] Add a real allowlist / invitation flow and usage budget alerts.
 
 ---
 
-## License
+## 📜 License
 
 MIT © 2026 Haoning Xu. See [LICENSE](LICENSE).
 
@@ -303,6 +337,10 @@ MIT © 2026 Haoning Xu. See [LICENSE](LICENSE).
 ## 中文说明
 
 **LookingFor 是一个从你的 GitHub Stars 出发、用 AI 帮你重新发现和继续发现开源仓库的工具。**
+
+### 演示
+
+上方 GIF 展示了搜索、分批和“新发现”标记；完整 25 秒视频见 [assets/readme/demo.mp4](assets/readme/demo.mp4)。网页右上角可以切换 `中文 / EN`。
 
 ### 它做什么
 
