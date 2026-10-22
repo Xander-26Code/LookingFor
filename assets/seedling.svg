@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 440" fill="none">
+  <!-- 本地矢量插画，不需要图片服务或网络字体。 -->
+  <circle cx="257" cy="209" r="141" stroke="#c4ceba" stroke-dasharray="3 8"/>
+  <circle cx="257" cy="209" r="107" stroke="#d6decb"/>
+  <ellipse cx="258" cy="358" rx="117" ry="12" fill="#d8e0ce"/>
+  <path d="M257 351C249 302 251 254 267 211C281 175 291 141 285 105" stroke="#586f4c" stroke-width="4" stroke-linecap="round"/>
+  <path d="M257 306C234 282 215 252 196 228M265 222C290 214 321 194 341 173" stroke="#586f4c" stroke-width="3" stroke-linecap="round"/>
+  <path d="M250 287C196 289 164 254 163 211C215 212 251 239 250 287Z" fill="#9eaf87"/>
+  <path d="M251 286C223 264 195 238 172 219" stroke="#71865c" stroke-width="1.5"/>
+  <path d="M270 216C274 168 308 144 358 146C355 193 317 222 270 216Z" fill="#6f895c"/>
+  <path d="M275 212C301 193 327 171 348 153" stroke="#526d46" stroke-width="1.5"/>
+  <path d="M282 161C242 147 225 114 232 78C272 91 290 116 282 161Z" fill="#b0bf95"/>
+  <path d="M282 160C268 133 250 108 238 87" stroke="#81966b" stroke-width="1.5"/>
+  <path d="M286 121C288 88 313 69 344 69C341 100 318 123 286 121Z" fill="#859d6e"/>
+  <path d="M290 118L337 76" stroke="#667f53" stroke-width="1.5"/>
+  <path d="M227 350C241 339 270 337 289 350" stroke="#9faf8c" stroke-width="2" stroke-linecap="round"/>
+  <path d="M158 321L164 307L170 321M164 307V331" stroke="#afba99" stroke-width="2" stroke-linecap="round"/>
+  <circle cx="369" cy="261" r="5" fill="#bdac7c"/>
+  <circle cx="141" cy="183" r="3" fill="#adbb96"/>
+  <path d="M371 107V119M365 113H377" stroke="#a5b58c" stroke-width="2" stroke-linecap="round"/>
+</svg>

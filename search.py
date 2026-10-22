@@ -1,12 +1,14 @@
 import json
 
-from nicegui import ui, app
+from nicegui import ui, run
 from dotenv import load_dotenv
 import requests
 
-def search(keywords: str = ''):
+async def search(keywords: str = ''):
     try:
-        reponse = requests.get("https://api.github.com/search/repositories", headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"}, timeout=10, params={"q": keywords, "per_page": 10, "page": 1, "sort": "stars", "order": "desc"})
+        reponse = await run.io_bound(requests.get, "https://api.github.com/search/repositories", headers={"Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2026-03-10"}, timeout=10, params={"q": keywords, "per_page": 10, "page": 1, "sort": "stars", "order": "desc"})
+        if reponse is None:
+            return
         reponse.raise_for_status()
         return reponse.json()
     except requests.exceptions.JSONDecodeError:
