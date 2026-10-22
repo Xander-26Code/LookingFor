@@ -35,6 +35,10 @@ button, a, input { -webkit-tap-highlight-color: transparent; }
 .account-area { align-items: center; gap: 6px; }
 .logout-link { display: flex; align-items: center; min-height: 40px; padding: 0 4px; color: var(--muted); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
 .logout-link:hover { color: var(--ink); }
+.header-actions { display: flex; align-items: center; gap: 12px; }
+.language-switch { align-items: center; gap: 2px; }
+.lang-button { min-height: 34px; padding: 0 7px; color: var(--muted); font-size: 11px; letter-spacing: .5px; }
+.lang-button.is-active { color: var(--ink); font-weight: 700; text-decoration: underline; text-underline-offset: 4px; }
 .site-nav { display: flex; align-items: center; gap: 32px; }
 .nav-link { color: var(--muted); min-height: 44px; display: flex; align-items: center; border-bottom: 2px solid transparent; }
 .nav-link:hover, .nav-link.is-active { color: var(--ink); border-color: var(--green); }
@@ -153,8 +157,9 @@ a.repo-name:hover { color: var(--green); text-decoration: underline; text-underl
 @media (max-width: 700px) {
   .page-main, .site-footer { width: calc(100% - 36px); }
   .header-inner { padding: 16px 18px 0; gap: 12px; flex-wrap: wrap; }
+  .header-actions { margin-left: auto; }
   .brand { font-size: 23px; }
-  .header-connect { margin-left: auto; padding: 0 12px; min-height: 44px; font-size: 12px; }
+  .header-connect { margin-left: 0; padding: 0 12px; min-height: 44px; font-size: 12px; }
   .account-link { margin-left: auto; max-width: 150px; gap: 7px; padding: 4px; }
   .account-name, .account-login { max-width: 86px; }
   .account-arrow { display: none; }
