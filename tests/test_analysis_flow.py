@@ -1,53 +1,59 @@
-"""运行：python -m unittest discover -s tests -v（不请求真实 API）。"""
+"""分析流程与多用户隔离测试：临时 SQLite + 模拟模型，无真实 API 请求。"""
 
-import hashlib
 import asyncio
 import importlib.util
 import json
-from pathlib import Path
+import sqlite3
 import tempfile
 import time
+from pathlib import Path
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
 import analyse
+import database
 from openai import OpenAIError
 
-# 导入页面函数用于测试，但不启动 NiceGUI 服务，也不读取真实 .env。
 with patch('nicegui.ui.run'), patch('dotenv.load_dotenv'):
     import main
 
 
 class AnalysisFlowTests(unittest.TestCase):
     def setUp(self):
-        self.temporary = tempfile.TemporaryDirectory()
-        self.addCleanup(self.temporary.cleanup)
-        self.root = Path(self.temporary.name)
-        patcher = patch.object(analyse, 'project_dir', self.root)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(analyse, 'load_dotenv')
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        patcher = patch.object(analyse, 'OpenAI')
-        self.client_factory = patcher.start()
-        self.addCleanup(patcher.stop)
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.root = Path(temporary.name)
+        self.patch(database, 'DATABASE_PATH', self.root / 'test.db')
+        database.init_db()
+        database.save_user({'id': 42, 'login': 'alice'})
+        database.save_user({'id': 99, 'login': 'bob'})
+        self.session = {'github_user': {'id': 42, 'login': 'alice'}, 'github_token': 'fake-token'}
+        self.patch(main, 'app', SimpleNamespace(storage=SimpleNamespace(user=self.session)))
+        self.patch(analyse, 'load_dotenv')
+        self.client_factory = self.patch(analyse, 'OpenAI')
         self.create = self.client_factory.return_value.chat.completions.create
-        self.set_response({'interests': [{'search_keywords': [' python ', 'python', 'agent tools']}]})
+        self.create.return_value = SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(
+            content=json.dumps({'interests': [{'search_keywords': [' python ', 'python', 'agent tools']}]})))])
+        self.notice = self.patch(main, 'notice')
+        self.empty = self.patch(main, 'empty_state')
+        self.navigate = self.patch(main.ui.navigate, 'to')
+        for name in ('row', 'spinner', 'label'):
+            self.patch(main.ui, name)
 
-    def set_response(self, payload):
-        self.create.return_value = SimpleNamespace(choices=[
-            SimpleNamespace(message=SimpleNamespace(content=json.dumps(payload)))])
+    def patch(self, target, name, *args, **kwargs):
+        patcher = patch.object(target, name, *args, **kwargs)
+        result = patcher.start()
+        self.addCleanup(patcher.stop)
+        return result
 
-    def save_stars(self, name='example/first', ensure_ascii=True):
-        content = json.dumps([{'full_name': name, 'description': '中文简介',
-                               'language': 'Python', 'topics': ['agents']}],
-                             ensure_ascii=ensure_ascii).encode('utf-8')
-        (self.root / 'starred_repos.json').write_bytes(content)
-        return content
+    def stars(self, user_id=42, name='example/alice'):
+        repos = [{'id': user_id, 'full_name': name, 'description': '中文简介',
+                  'language': 'Python', 'topics': ['agents']}]
+        database.save_star_snapshot(user_id, repos)
+        return repos
 
-    def test_import_without_stars_or_api_key_has_no_side_effects(self):
+    def test_import_does_not_read_files_or_call_model(self):
         copied = self.root / 'analyse.py'
         copied.write_text(Path(analyse.__file__).read_text())
         spec = importlib.util.spec_from_file_location('isolated_analysis', copied)
@@ -56,73 +62,127 @@ class AnalysisFlowTests(unittest.TestCase):
             spec.loader.exec_module(module)
         constructor.assert_not_called()
         dotenv.assert_not_called()
-        self.assertEqual([p.name for p in self.root.glob('*.json')], [])
+        self.assertEqual(list(self.root.glob('*.json')), [])
 
-    def test_each_call_reads_latest_stars(self):
-        self.save_stars('example/first')
-        self.assertEqual(analyse.generate_search_keywords(), ['python', 'agent tools'])
-        self.save_stars('example/second')
-        analyse.generate_search_keywords()
+    def test_model_uses_only_explicit_input_and_deduplicates_keywords(self):
+        alice = self.stars()
+        bob = self.stars(99, 'example/bob')
+        self.assertEqual(analyse.generate_search_keywords(alice), ['python', 'agent tools'])
+        analyse.generate_search_keywords(bob)
         prompt = self.create.call_args.kwargs['messages'][1]['content']
-        self.assertIn('example/second', prompt)
-        self.assertNotIn('example/first', prompt)
-
-    def test_hash_matches_exact_file_bytes_with_both_encodings(self):
-        for escaped in (True, False):
-            with self.subTest(ensure_ascii=escaped):
-                content = self.save_stars(ensure_ascii=escaped)
-                analyse.generate_search_keywords()
-                saved = json.loads((self.root / 'search_keywords.json').read_text())
-                self.assertEqual(saved['source_sha256'], hashlib.sha256(content).hexdigest())
-
-    def test_failed_model_response_preserves_existing_data(self):
-        content = self.save_stars()
-        keywords = self.root / 'search_keywords.json'
-        keywords.write_text('{"previous": true}')
-        self.create.return_value.choices[0].message.content = 'not JSON'
-        with self.assertRaises(ValueError):
-            analyse.generate_search_keywords()
-        self.assertEqual((self.root / 'starred_repos.json').read_bytes(), content)
-        self.assertEqual(keywords.read_text(), '{"previous": true}')
+        self.assertIn('example/bob', prompt)
+        self.assertNotIn('example/alice', prompt)
 
     def test_empty_stars_do_not_call_model(self):
-        (self.root / 'starred_repos.json').write_text('[]')
         with self.assertRaises(ValueError):
-            analyse.generate_search_keywords()
+            analyse.generate_search_keywords([])
         self.client_factory.assert_not_called()
 
+    def test_invalid_model_response_preserves_stars(self):
+        self.stars()
+        before = database.load_user_data(42)
+        self.create.return_value.choices[0].message.content = 'not JSON'
+        self.assertFalse(asyncio.run(main.analyse_and_open_search()))
+        self.assertEqual(database.load_user_data(42), before)
+        self.navigate.assert_not_called()
+
     def test_failures_do_not_redirect_and_retry_can_succeed(self):
-        with patch.object(main, 'generate_search_keywords') as generate, \
-                patch.object(main, 'notice') as notice, patch.object(main.ui.navigate, 'to') as navigate, \
-                patch.object(main.ui, 'row'), patch.object(main.ui, 'spinner'), patch.object(main.ui, 'label'):
-            for error in (OpenAIError('mock service failure'), ValueError('invalid JSON'), OSError('disk error')):
-                with self.subTest(error=type(error).__name__):
-                    generate.side_effect = error
-                    self.assertFalse(asyncio.run(main.analyse_and_open_search()))
-                    navigate.assert_not_called()
-            self.assertEqual(notice.call_count, 3)
+        self.stars()
+        with patch.object(main, 'generate_search_keywords') as generate:
+            for error in (OpenAIError('mock failure'), ValueError('invalid JSON'), sqlite3.OperationalError('locked')):
+                generate.side_effect = error
+                self.assertFalse(asyncio.run(main.analyse_and_open_search()))
+                self.navigate.assert_not_called()
+                self.assertIsNone(database.load_user_data(42)['keywords'])
             generate.side_effect = None
             generate.return_value = []
             self.assertFalse(asyncio.run(main.analyse_and_open_search()))
-            navigate.assert_not_called()
             generate.return_value = ['python']
             self.assertTrue(asyncio.run(main.analyse_and_open_search()))
-            navigate.assert_called_once_with('/search')
+            self.assertEqual(database.load_user_data(42)['keywords'], ['python'])
+            self.navigate.assert_called_once_with('/search')
+
+    def test_saved_analysis_is_reused_without_model(self):
+        self.stars()
+        data = database.load_user_data(42)
+        database.save_analysis(42, data['version'], ['python'])
+        self.assertTrue(asyncio.run(main.analyse_and_open_search()))
+        self.client_factory.assert_not_called()
+
+    def test_old_model_result_does_not_replace_new_snapshot_analysis(self):
+        self.stars()
+
+        def update_during_analysis(repos):
+            version = database.save_star_snapshot(42, [{'id': 2, 'full_name': 'example/new'}])
+            database.save_analysis(42, version, ['new keywords'])
+            return ['old keywords']
+
+        with patch.object(main, 'generate_search_keywords', side_effect=update_during_analysis):
+            self.assertFalse(asyncio.run(main.analyse_and_open_search()))
+        self.assertEqual(database.load_user_data(42)['keywords'], ['new keywords'])
+        self.navigate.assert_not_called()
+
+    def test_switching_account_during_analysis_does_not_save_into_new_account(self):
+        self.stars()
+        self.stars(99, 'example/bob')
+
+        def switch_account(repos):
+            self.session['github_user'] = {'id': 99, 'login': 'bob'}
+            return ['alice keywords']
+
+        with patch.object(main, 'generate_search_keywords', side_effect=switch_account):
+            self.assertFalse(asyncio.run(main.analyse_and_open_search()))
+        self.assertIsNone(database.load_user_data(99)['keywords'])
+        self.navigate.assert_not_called()
+
+    def test_anonymous_and_legacy_sessions_cannot_read_or_analyse_other_users(self):
+        self.stars()
+        for user in ({}, {'login': 'alice'}):
+            self.session['github_user'] = user
+            with patch.object(main, 'load_user_data') as read:
+                self.assertIsNone(asyncio.run(main.load_saved_stars()))
+                self.assertFalse(asyncio.run(main.analyse_and_open_search()))
+                asyncio.run(main.search_repositories())
+                read.assert_not_called()
+        self.client_factory.assert_not_called()
+
+    def test_star_reads_follow_current_user(self):
+        alice = self.stars()
+        bob = self.stars(99, 'example/bob')
+        self.assertEqual(asyncio.run(main.load_saved_stars()), alice)
+        self.session['github_user'] = {'id': 99, 'login': 'bob'}
+        self.assertEqual(asyncio.run(main.load_saved_stars()), bob)
+
+    def test_search_uses_current_users_keywords_and_star_badges(self):
+        self.stars()
+        self.stars(99, 'example/bob')
+        for user_id, keyword in ((42, 'alice tools'), (99, 'bob tools')):
+            data = database.load_user_data(user_id)
+            database.save_analysis(user_id, data['version'], [keyword])
+        for user_id, keyword in ((42, 'alice tools'), (99, 'bob tools')):
+            self.session['github_user'] = {'id': user_id, 'login': 'test'}
+            with patch.object(main, 'get_cached_result', return_value={'items': [{'id': user_id}]}) as cached, \
+                    patch.object(main, 'repository_browser') as browser, patch.object(main, 'search_one') as fetch:
+                asyncio.run(main.search_repositories())
+                cached.assert_called_once_with(main.build_query([keyword]))
+                self.assertEqual(browser.call_args.kwargs['keywords'], [keyword])
+                self.assertEqual(browser.call_args.kwargs['starred_ids'], {user_id})
+                fetch.assert_not_called()
 
     def test_slow_model_does_not_block_other_async_work(self):
-        def slow_model():
+        self.stars()
+
+        def slow_model(repos):
             time.sleep(0.15)
             return ['python']
 
         async def check():
             task = asyncio.create_task(main.analyse_and_open_search())
             await asyncio.sleep(0.02)
-            self.assertFalse(task.done(), 'The event loop was blocked until model completion.')
+            self.assertFalse(task.done())
             self.assertTrue(await task)
 
-        with patch.object(main, 'generate_search_keywords', side_effect=slow_model), \
-                patch.object(main.ui.navigate, 'to'), patch.object(main.ui, 'row'), \
-                patch.object(main.ui, 'spinner'), patch.object(main.ui, 'label'):
+        with patch.object(main, 'generate_search_keywords', side_effect=slow_model):
             asyncio.run(check())
 
 

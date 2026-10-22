@@ -7,3 +7,5 @@ interest_input.json
 search_keywords.json
 starred_repos.json
 redisdemo/
+lookingfor.db
+lookingfor.db-*

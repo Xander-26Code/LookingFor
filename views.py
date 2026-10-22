@@ -134,10 +134,9 @@ def empty_state(title: str, description: str, *, setup: bool = False):
             label, target = '连接 GitHub', '/auth/github'
         ui.link(label, target).classes('button-link primary-link')
         if setup:
-            with ui.expansion('本地开发：如何准备推荐数据', icon='terminal').classes('setup-details'):
+            with ui.expansion('如何准备推荐数据', icon='help_outline').classes('setup-details'):
                 ui.label('1. 连接 GitHub，完成 Star 同步。')
-                ui.label('2. 同步后会自动分析。分析失败时，可以通过「准备分析」按钮重试，也可以在项目目录运行：')
-                ui.label('python analyse.py').classes('command')
+                ui.label('2. 同步后会自动分析。分析失败时，通过「准备分析」按钮重试。')
                 ui.label('3. 完成后回到「探索仓库」页面。')
                 ui.link('重新打开探索页', '/search').classes('text-link')
 

@@ -1,12 +1,8 @@
 import json
-import hashlib
 from collections import Counter
-from pathlib import Path
 import os
 from dotenv import load_dotenv
 from openai import OpenAI
-# Resolve files relative to this script, regardless of the terminal's directory.
-project_dir = Path(__file__).resolve().parent
 
 SYSTEM_PROMPT = """
 You are the repository interest analyst for LookingFor.
@@ -129,11 +125,8 @@ Before returning, verify that every evidence repository exists in the input
 and every referenced interest name exists in your output.
 """
 
-def generate_search_keywords() -> list[str]:
-    """读取当前收藏、生成兴趣关键词并保存；导入模块不会执行分析。"""
-    source_content = (project_dir / "starred_repos.json").read_bytes()
-    starred_repos = json.loads(source_content)
-    source_sha256 = hashlib.sha256(source_content).hexdigest()
+def generate_search_keywords(starred_repos: list[dict]) -> list[str]:
+    """只分析调用方传入的收藏；不读取或写入任何用户数据文件。"""
     if not isinstance(starred_repos, list) or not all(isinstance(repo, dict) for repo in starred_repos):
         raise ValueError('Saved stars must be a list of repositories.')
     if not starred_repos:
@@ -165,10 +158,6 @@ def generate_search_keywords() -> list[str]:
         },
         "repositories": repositories,
     }
-
-    output_path = project_dir / "interest_input.json"
-    with open(output_path, "w", encoding="utf-8") as f:
-        json.dump(interest_input, f, ensure_ascii=False, indent=2)
 
     load_dotenv()  # Load environment variables from .env file
 
@@ -226,20 +215,8 @@ def generate_search_keywords() -> list[str]:
                 if keyword and keyword not in search_keywords:
                     search_keywords.append(keyword)
 
-    # 保存同一份输入文件的哈希，供搜索页面确认关键词是否仍然适用。
-    keyword_data = {
-        "source_sha256": source_sha256,
-        "keywords": search_keywords,
-    }
-    keyword_path = project_dir / "search_keywords.json"
-    temporary_path = project_dir / "search_keywords.json.tmp"
-    temporary_path.write_text(
-        json.dumps(keyword_data, ensure_ascii=False, indent=2), encoding="utf-8"
-    )
-    temporary_path.replace(keyword_path)
-    print(f"Saved {len(search_keywords)} search keywords to {keyword_path}")
     return search_keywords
 
 
 if __name__ == "__main__":
-    generate_search_keywords()
+    raise SystemExit("请登录 LookingFor，在「分析兴趣」页面运行分析。")
