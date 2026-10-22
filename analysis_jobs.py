@@ -32,8 +32,10 @@ def _perform(user_id: int, claim: dict, generate: Callable) -> None:
         keywords = generate(claim['data']['repositories'])
     except OpenAIError:
         error = 'model'
-    except (ValueError, UnicodeError):
+    except (ValueError, UnicodeError) as exc:
         error = 'invalid'
+        # 只记录异常类型/解析位置，不记录收藏内容或 Key。
+        logger.warning('Analysis input/output rejected for user %s: %s', user_id, exc)
     except Exception:
         error = 'internal'
         logger.warning('Analysis failed for user %s (details omitted to protect input data)', user_id)
