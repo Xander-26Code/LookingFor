@@ -57,6 +57,14 @@ def require_user() -> int | None:
     return user_id
 
 
+def _safe_delete(element) -> None:
+    """刷新或关闭页面后，客户端可能已经不存在；清理失败不应影响后台任务。"""
+    try:
+        element.delete()
+    except (RuntimeError, ValueError):
+        pass
+
+
 def _remove_session_key(key: str) -> None:
     if key in app.storage.user:
         del app.storage.user[key]
@@ -250,7 +258,7 @@ def github_callback_page(code: str = '', state: str = ''):
                 with feedback:
                     await sync_github_stars(code, state)
             finally:
-                loading.delete()
+                _safe_delete(loading)
 
         # 先返回页面，让浏览器建立连接，再开始网络请求。
         ui.timer(0.1, finish_sign_in, once=True, immediate=False)
@@ -460,7 +468,7 @@ async def analyse_and_open_search() -> bool:
         notice(L('暂时无法读取或保存分析状态，请稍后重试。',
                  'Could not read or save analysis status. Please try again later.'))
     finally:
-        progress.delete()
+        _safe_delete(progress)
     return False
 
 
@@ -807,7 +815,7 @@ def search_page():
                 with results:
                     await search_repositories()
             finally:
-                loading.delete()
+                _safe_delete(loading)
 
         ui.timer(0.1, load_results, once=True, immediate=False)
 

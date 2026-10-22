@@ -291,13 +291,12 @@ Caddyfile           Automatic HTTPS reverse proxy
 - [ ] Add a screenshot or short demo GIF to this README.
 - [ ] Switch the live demo from the temporary `sslip.io` address to `repofind.click`.
 - [ ] Add a real allowlist / invitation flow and usage budget alerts.
-- [ ] Add a proper open-source license.
 
 ---
 
 ## License
 
-TODO: add a `LICENSE` file before publishing. No license has been chosen yet.
+MIT © 2026 Haoning Xu. See [LICENSE](LICENSE).
 
 ---
 
@@ -344,7 +343,7 @@ docker compose up -d --build
 - beta 阶段的 token 尚未加密存储；
 - 还没有内测白名单，公开链接前建议先加；
 - 域名 `repofind.click` 还在实名/解析流程中，目前使用临时 `sslip.io` 地址；
-- 尚未添加 LICENSE。
+- 采用 MIT License，见 [LICENSE](LICENSE)。
 
 ### 测试
 
