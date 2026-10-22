@@ -41,6 +41,11 @@ class UserDatabaseTests(unittest.TestCase):
         database.init_db()
         self.assertEqual(self.rows(), [(42, 'alice', 'Alice', 'https://example.com/a.png')])
 
+    def test_database_uses_wal_and_waits_for_writes(self):
+        with database.connect() as connection:
+            self.assertEqual(connection.execute('PRAGMA journal_mode').fetchone()[0].lower(), 'wal')
+            self.assertGreaterEqual(connection.execute('PRAGMA busy_timeout').fetchone()[0], 1000)
+
     def test_returning_user_updates_by_id_without_duplicates(self):
         database.save_user(self.profile)
         updated = {**self.profile, 'login': 'alice-renamed', 'name': "Alice's new name"}
@@ -91,6 +96,43 @@ class UserDatabaseTests(unittest.TestCase):
         self.assertTrue(database.save_analysis(42, new, ['new']))
         self.assertEqual(database.load_user_data(42)['keywords'], ['new'])
 
+    def test_unchanged_resync_preserves_analysis_but_refreshes_display_data(self):
+        database.save_user(self.profile)
+        original = [
+            {'id': 2, 'description': '工具', 'topics': ['python', 'ai'], 'stargazers_count': 10},
+            {'id': 1, 'topics': None},
+        ]
+        version = database.save_star_snapshot(42, original)
+        database.save_analysis(42, version, ['python tools'])
+        updated = [
+            {'id': 1, 'topics': []},
+            {'id': 2, 'description': '工具', 'topics': ['ai', 'python'], 'stargazers_count': 20},
+        ]
+        self.assertEqual(database.save_star_snapshot(42, updated), version)
+        data = database.load_user_data(42)
+        self.assertEqual(data['keywords'], ['python tools'])
+        self.assertEqual(data['repositories'], updated)
+
+    def test_analysis_field_changes_invalidate_previous_keywords(self):
+        database.save_user(self.profile)
+        original = {'id': 1, 'full_name': 'example/tool', 'description': None,
+                    'language': 'Python', 'topics': ['cli']}
+        for field, new_value in (('full_name', 'example/renamed'), ('description', 'New description'),
+                                 ('language', 'Rust'), ('topics', ['agents'])):
+            with self.subTest(field=field):
+                version = database.save_star_snapshot(42, [original])
+                database.save_analysis(42, version, ['old'])
+                new_version = database.save_star_snapshot(42, [{**original, field: new_value}])
+                self.assertNotEqual(new_version, version)
+                self.assertIsNone(database.load_user_data(42)['keywords'])
+
+    def test_concurrent_identical_syncs_keep_one_version(self):
+        database.save_user(self.profile)
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            versions = list(pool.map(lambda _: database.save_star_snapshot(42, [{'id': 1}]), range(8)))
+        self.assertEqual(len(set(versions)), 1)
+        self.assertEqual(database.load_user_data(42)['version'], versions[0])
+
     def test_invalid_snapshot_preserves_previous_data_and_empty_snapshot_is_valid(self):
         database.save_user(self.profile)
         version = database.save_star_snapshot(42, [{'id': 1}])
@@ -107,6 +149,42 @@ class UserDatabaseTests(unittest.TestCase):
         with self.assertRaises(sqlite3.IntegrityError):
             database.save_star_snapshot(123, [{'id': 1}])
         self.assertIsNone(database.load_user_data(123))
+
+    def test_delete_user_data_removes_only_target_and_children(self):
+        database.save_user(self.profile)
+        database.save_user({'id': 99, 'login': 'bob'})
+        database.save_star_snapshot(42, [{'id': 1}])
+        claim = database.claim_analysis(42)
+        database.finish_analysis(42, claim['job_id'], ['tools'])
+        database.save_star_snapshot(99, [{'id': 2}])
+
+        self.assertTrue(database.delete_user_data(42))
+        self.assertIsNone(database.load_user_data(42))
+        self.assertEqual(database.load_user_data(99)['repositories'], [{'id': 2}])
+        self.assertFalse(database.delete_user_data(42))
+
+        with database.connect() as connection:
+            for table in ('analysis_attempts', 'analysis_jobs', 'analyses', 'star_snapshots'):
+                count = connection.execute(
+                    f'SELECT COUNT(*) FROM {table} WHERE user_id = 42'
+                ).fetchone()[0]
+                self.assertEqual(count, 0, table)
+        self.assertEqual(self.rows(), [(99, 'bob', 'bob', '')])
+
+    def test_backup_to_creates_a_readable_snapshot(self):
+        database.save_user(self.profile)
+        database.save_star_snapshot(42, [{'id': 1}])
+        target = database.backup_to(self.root / 'backup.db')
+        self.assertTrue(target.exists())
+
+        connection = sqlite3.connect(target)
+        try:
+            rows = connection.execute(
+                'SELECT github_id, login FROM users ORDER BY github_id'
+            ).fetchall()
+        finally:
+            connection.close()
+        self.assertEqual(rows, [(42, 'alice')])
 
     def run_callback(self, profile, *, save_error=None):
         session = {'state': 'test-state'}

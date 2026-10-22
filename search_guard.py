@@ -1,277 +1,212 @@
-"""搜索保护层：Redis 缓存 + 单飞锁 + 令牌桶限流。"""
-
+"""公开仓库分页缓存、可续期请求锁、滚动窗口限流和 GitHub 冷却时间。"""
+import hashlib
 import json
+import logging
+import math
 import os
+import threading
 import time
 import uuid
-from collections.abc import Callable
+from contextlib import contextmanager
 from dataclasses import dataclass
+from functools import lru_cache
 
 import redis
+from dotenv import load_dotenv
 
-REDIS_HOST = os.getenv("REDIS_HOST", "127.0.0.1")
-REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
-REDIS_DB = int(os.getenv("REDIS_DB", "0"))
+logger = logging.getLogger(__name__)
+SEARCH_CACHE_TTL = 6 * 60 * 60
+LOCK_TTL = 60  # 必须明显大于一次 GitHub 请求的 15 秒超时
+RENEW_INTERVAL = 10
+WAIT_TIMEOUT = 2.0
+RATE_LIMIT_CAPACITY = 25  # 保守地低于 GitHub 的认证搜索额度
+RATE_WINDOW_SECONDS = 60
+API_VERSION = '2026-03-10'
 
-SEARCH_CACHE_TTL = 6 * 60 * 60  # 6 小时
-LOCK_TTL = 10                   # 锁最多存在 10 秒
-WAIT_TIMEOUT = 5.0              # 等待别人写缓存的最长时间
-WAIT_INTERVAL = 0.05            # 每 50ms 查一次缓存
 
-RATE_LIMIT_CAPACITY = 30        # 桶容量：30 次
-RATE_LIMIT_REFILL_RATE = 0.5    # 每秒补 0.5 个，即 30 次/分钟
-RATE_LIMIT_PREFIX = "rl:search:user:"
-
-r = redis.Redis(
-    host=REDIS_HOST,
-    port=REDIS_PORT,
-    db=REDIS_DB,
-    decode_responses=True,
-    socket_connect_timeout=2,
-)
-
-RELEASE_LOCK_LUA = """
-if redis.call("get", KEYS[1]) == ARGV[1] then
-    return redis.call("del", KEYS[1])
-else
-    return 0
-end
-"""
-
-TOKEN_BUCKET_LUA = """
-local key = KEYS[1]
-local capacity = tonumber(ARGV[1])
-local refill_rate = tonumber(ARGV[2])
-local cost = tonumber(ARGV[3])
-local now = tonumber(ARGV[4])
-
-local data = redis.call("HMGET", key, "tokens", "ts")
-local tokens = tonumber(data[1])
-local last = tonumber(data[2])
-
-if tokens == nil or last == nil then
-    tokens = capacity
-    last = now
-end
-
-local elapsed = now - last
-if elapsed < 0 then
-    elapsed = 0
-end
-
-tokens = math.min(capacity, tokens + elapsed * refill_rate)
-
-local allowed = 0
-if tokens >= cost then
-    tokens = tokens - cost
-    allowed = 1
-end
-
-redis.call("HSET", key, "tokens", string.format("%.6f", tokens),
-           "ts", string.format("%.6f", now))
-
-local ttl = math.ceil(capacity / refill_rate) + 60
-redis.call("EXPIRE", key, string.format("%d", ttl))
-
-local wait = 0
-if allowed == 0 then
-    wait = (cost - tokens) / refill_rate
-end
-
-return {allowed, string.format("%.6f", tokens), string.format("%.6f", wait)}
-"""
+class SearchError(Exception):
+    def __init__(self, code: str, detail: str = '', wait: float = 0):
+        super().__init__(code)
+        self.code, self.detail, self.wait = code, detail, wait
 
 
 @dataclass
 class GuardResult:
-    """一次受保护搜索的结果。"""
-
     data: dict | None
-    source: str          # cache / fetched / rate_limited / busy
-    wait: float = 0.0    # 被限流时建议等待的秒数
+    source: str
+    wait: float = 0.0
 
 
-def normalize_query(query: str) -> str:
-    return " ".join(query.strip().lower().split())
+@lru_cache(maxsize=1)
+def get_client():
+    # 首次使用才读环境变量，避免 main.py 尚未加载 .env 就创建连接。
+    load_dotenv()
+    options = dict(decode_responses=True, socket_connect_timeout=2, socket_timeout=2)
+    if os.getenv('REDIS_URL'):
+        return redis.Redis.from_url(os.environ['REDIS_URL'], **options)
+    return redis.Redis(host=os.getenv('REDIS_HOST', '127.0.0.1'),
+                       port=int(os.getenv('REDIS_PORT', '6379')),
+                       db=int(os.getenv('REDIS_DB', '0')), **options)
 
 
-def cache_key(query: str) -> str:
-    return "search:v1:" + normalize_query(query).replace(" ", "-")
+def ping() -> bool:
+    """健康检查用：Redis 可连接。失败时抛 redis.RedisError。"""
+    return bool(get_client().ping())
 
 
-def lock_key(query: str) -> str:
-    return "lock:v1:" + normalize_query(query).replace(" ", "-")
+def cache_key(query: str, page: int = 1, per_page: int = 10) -> str:
+    # 不替换查询内的空格或连字符，完整编码影响结果的参数。
+    signature = json.dumps([query, page, per_page, 'stars', 'desc', API_VERSION, 'public'], ensure_ascii=False)
+    return 'search:public:v2:' + hashlib.sha256(signature.encode()).hexdigest()
 
 
-def rate_limit_key(user_id: int | str) -> str:
-    return f"{RATE_LIMIT_PREFIX}{user_id}"
+def public_page(data) -> bool:
+    return (isinstance(data, dict) and isinstance(data.get('items'), list)
+            and type(data.get('has_more')) is bool and type(data.get('limit_reached')) is bool
+            and type(data.get('incomplete_results')) is bool
+            and all(isinstance(item, dict) and type(item.get('id')) is int
+                    and item.get('private') is False
+                    and item.get('visibility', 'public') == 'public' for item in data['items']))
 
 
-def get_cached(query: str) -> dict | None:
-    raw = r.get(cache_key(query))
+def get_cached(query: str, page: int = 1, per_page: int = 10) -> dict | None:
+    client = get_client()
+    key = cache_key(query, page, per_page)
+    raw = client.get(key)
     if raw is None:
         return None
     try:
         data = json.loads(raw)
-    except json.JSONDecodeError:
-        r.delete(cache_key(query))
-        return None
-    if not isinstance(data, dict):
-        r.delete(cache_key(query))
-        return None
-    return data
+        if public_page(data):
+            return data
+    except (ValueError, TypeError):
+        pass
+    client.delete(key)
+    return None
 
 
-def set_cached(query: str, data: dict, ttl: int = SEARCH_CACHE_TTL) -> None:
-    r.set(cache_key(query), json.dumps(data, ensure_ascii=False), ex=ttl)
+RELEASE = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) end return 0"
+RENEW = "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('expire', KEYS[1], ARGV[2]) end return 0"
+SAVE = """
+if redis.call('get', KEYS[1]) == ARGV[1] then
+    redis.call('set', KEYS[2], ARGV[2], 'EX', ARGV[3])
+    return 1
+end
+return 0
+"""
+WINDOW = """
+local cooldown = redis.call('pttl', KEYS[2])
+if cooldown > 0 then return cooldown end
+local t = redis.call('TIME')
+local now = tonumber(t[1])*1000 + math.floor(tonumber(t[2])/1000)
+local window = tonumber(ARGV[2])*1000
+redis.call('zremrangebyscore', KEYS[1], '-inf', now-window)
+if redis.call('zcard', KEYS[1]) >= tonumber(ARGV[1]) then
+    local first = redis.call('zrange', KEYS[1], 0, 0, 'WITHSCORES')
+    return math.max(1, tonumber(first[2])+window-now)
+end
+redis.call('zadd', KEYS[1], now, ARGV[3])
+redis.call('expire', KEYS[1], ARGV[2])
+return 0
+"""
+COOLDOWN = """
+local remaining = redis.call('pttl', KEYS[1])
+if remaining < tonumber(ARGV[1]) then redis.call('psetex', KEYS[1], ARGV[1], '1') end
+"""
 
 
-def delete_cached(query: str) -> None:
-    r.delete(cache_key(query))
+def set_cooldown(user_id, seconds):
+    get_client().eval(COOLDOWN, 1, f'search:cooldown:{user_id}', max(1, math.ceil(seconds * 1000)))
 
 
-def acquire_lock(query: str) -> str | None:
-    token = str(uuid.uuid4())
-    acquired = r.set(lock_key(query), token, nx=True, ex=LOCK_TTL)
-    return token if acquired else None
+@contextmanager
+def lease(key: str):
+    client = get_client()
+    token = uuid.uuid4().hex
+    if not client.set(key, token, nx=True, ex=LOCK_TTL):
+        yield None
+        return
+    stopped = threading.Event()
 
+    def renew():
+        while not stopped.wait(RENEW_INTERVAL):
+            try:
+                if not client.eval(RENEW, 1, key, token, LOCK_TTL):
+                    return
+            except redis.RedisError:
+                return
 
-def release_lock(query: str, token: str) -> None:
-    r.eval(RELEASE_LOCK_LUA, 1, lock_key(query), token)
-
-
-def delete_lock(query: str) -> None:
-    r.delete(lock_key(query))
-
-
-def allow_request(
-    user_id: int | str,
-    capacity: float = RATE_LIMIT_CAPACITY,
-    refill_rate: float = RATE_LIMIT_REFILL_RATE,
-    cost: int = 1,
-) -> tuple[bool, float, float]:
-    """从用户令牌桶取 cost 个令牌。
-
-    返回 (allowed, remaining_tokens, wait_seconds)。
-    """
-    key = rate_limit_key(user_id)
-    allowed, tokens, wait = r.eval(
-        TOKEN_BUCKET_LUA, 1, key, capacity, refill_rate, cost, time.time()
-    )
-    return bool(int(allowed)), float(tokens), float(wait)
-
-
-def get_or_fetch(
-    query: str,
-    fetch: Callable[[], dict],
-    user_id: int | str,
-    ttl: int = SEARCH_CACHE_TTL,
-) -> GuardResult:
-    """缓存 → 单飞锁 → 限流 → 抓取。"""
-    cached = get_cached(query)
-    if cached is not None:
-        return GuardResult(cached, "cache")
-
-    token = acquire_lock(query)
-
-    if token is not None:
-        try:
-            # 抢到锁后再查一次：可能别人刚写好
-            cached = get_cached(query)
-            if cached is not None:
-                return GuardResult(cached, "cache")
-
-            # 只有真正要调 GitHub 的人才扣令牌
-            allowed, _tokens, wait = allow_request(user_id)
-            if not allowed:
-                return GuardResult(None, "rate_limited", wait)
-
-            data = fetch()
-            if not isinstance(data, dict):
-                raise TypeError("fetch() 必须返回 dict")
-
-            set_cached(query, data, ttl=ttl)
-            return GuardResult(data, "fetched")
-        finally:
-            # 成功、失败、限流，都要释放锁
-            release_lock(query, token)
-
-    # 没抢到锁：等别人写好缓存
-    deadline = time.time() + WAIT_TIMEOUT
-    while time.time() < deadline:
-        time.sleep(WAIT_INTERVAL)
-        cached = get_cached(query)
-        if cached is not None:
-            return GuardResult(cached, "cache")
-
-    return GuardResult(None, "busy", WAIT_INTERVAL)
-
-
-if __name__ == "__main__":
-    import threading
-    from collections import Counter
-    from concurrent.futures import ThreadPoolExecutor
-
+    worker = threading.Thread(target=renew, daemon=True)
+    worker.start()
     try:
-        r.ping()
-    except redis.exceptions.ConnectionError:
-        raise SystemExit("连不上 Redis，请先运行：brew services start redis")
+        yield token
+    finally:
+        stopped.set()
+        worker.join(timeout=3)
+        try:
+            client.eval(RELEASE, 1, key, token)
+        except redis.RedisError:
+            # 解锁异常不能掩盖已经得到的 GitHub 结果；锁最终由 TTL 回收。
+            logger.warning('Search lock release failed; waiting for expiry')
 
-    query = "MCP server"
-    delete_cached(query)
-    delete_lock(query)
-    r.delete(rate_limit_key(42), rate_limit_key(99), rate_limit_key(7))
 
-    calls = {"fetch": 0}
-    calls_lock = threading.Lock()
+def get_or_fetch(query, fetch, user_id, *, page=1, per_page=10, ttl=SEARCH_CACHE_TTL) -> GuardResult:
+    try:
+        cached = get_cached(query, page, per_page)
+        if cached is not None:
+            return GuardResult(cached, 'cache')
+        key = cache_key(query, page, per_page)
+        with lease('lock:' + key) as owner:
+            if owner is None:
+                deadline = time.monotonic() + WAIT_TIMEOUT
+                while time.monotonic() < deadline:
+                    time.sleep(0.05)
+                    cached = get_cached(query, page, per_page)
+                    if cached is not None:
+                        return GuardResult(cached, 'cache')
+                return GuardResult(None, 'busy', 1)
+            cached = get_cached(query, page, per_page)
+            if cached is not None:
+                return GuardResult(cached, 'cache')
+            # 同一账号的 GitHub 搜索串行执行，其他页面不会越过新收到的冷却时间。
+            with lease(f'lock:search:user:{user_id}') as user_owner:
+                if user_owner is None:
+                    return GuardResult(None, 'busy', 1)
+                wait_ms = get_client().eval(WINDOW, 2, f'search:window:{user_id}',
+                                           f'search:cooldown:{user_id}', RATE_LIMIT_CAPACITY,
+                                           RATE_WINDOW_SECONDS, uuid.uuid4().hex)
+                if wait_ms > 0:
+                    return GuardResult(None, 'rate_limited', wait_ms / 1000)
+                try:
+                    data = fetch()
+                except SearchError as exc:
+                    if exc.code == 'rate_limit':
+                        try:
+                            set_cooldown(user_id, max(1, exc.wait))
+                        except redis.RedisError:
+                            # 冷却写入失败不能把真正的限流原因覆盖成缓存故障。
+                            logger.warning('GitHub rate-limit cooldown could not be saved')
+                    raise
 
-    def fake_fetch() -> dict:
-        with calls_lock:
-            calls["fetch"] += 1
-        time.sleep(0.5)
-        return {"items": ["repo-a", "repo-b"]}
+                remaining = data.pop('_rate_remaining', None)
+                reset_after = data.pop('_rate_reset_after', 0)
+                if not public_page(data):
+                    raise SearchError('unexpected')
 
-    print("=== 1. 第一次调用：应该 fetched ===")
-    result = get_or_fetch(query, fake_fetch, 42, ttl=60)
-    print(result.source, result.data)
+                # GitHub 的真实剩余额度是最终裁判：只剩 0~1 次时，直接停到 reset。
+                if remaining is not None and remaining <= 1:
+                    try:
+                        set_cooldown(user_id, reset_after or 60)
+                    except redis.RedisError:
+                        logger.warning('GitHub quota cooldown could not be saved')
 
-    print("\n=== 2. 第二次调用：应该 cache ===")
-    result = get_or_fetch(query, fake_fetch, 42, ttl=60)
-    print(result.source, result.data)
-
-    print("\n=== 3. 清空缓存，20 个并发：应该只 fetch 1 次 ===")
-    delete_cached(query)
-    delete_lock(query)
-    with calls_lock:
-        calls["fetch"] = 0
-
-    workers = 20
-    barrier = threading.Barrier(workers)
-
-    def task(_):
-        barrier.wait()
-        return get_or_fetch(query, fake_fetch, 42, ttl=60)
-
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        results = list(pool.map(task, range(workers)))
-
-    print("状态分布:", dict(Counter(result.source for result in results)))
-    print("fetch 调用次数:", calls["fetch"])
-
-    print("\n=== 4. 用户 99 没有令牌：应该 rate_limited ===")
-    limited_query = "rate-limited-query"
-    delete_cached(limited_query)
-    delete_lock(limited_query)
-    r.hset(rate_limit_key(99), mapping={"tokens": "0", "ts": f"{time.time():.6f}"})
-    with calls_lock:
-        calls["fetch"] = 0
-
-    result = get_or_fetch(limited_query, fake_fetch, 99, ttl=60)
-    print("source:", result.source)
-    print("wait:", round(result.wait, 2))
-    print("fetch 调用次数:", calls["fetch"])
-
-    print("\n=== 5. 用户 7 命中缓存：不应创建限流 key ===")
-    result = get_or_fetch(query, fake_fetch, 7, ttl=60)
-    print("source:", result.source)
-    print("用户 7 的限流 key 是否存在:", r.exists(rate_limit_key(7)))
+                try:
+                    # 不完整结果短暂缓存，之后允许重新查询。
+                    cache_ttl = min(ttl, 30) if data['incomplete_results'] else ttl
+                    saved = get_client().eval(SAVE, 2, 'lock:' + key, key, owner,
+                                              json.dumps(data, ensure_ascii=False), cache_ttl)
+                except redis.RedisError:
+                    return GuardResult(data, 'fetched_uncached')
+                return GuardResult(data, 'fetched' if saved else 'fetched_uncached')
+    except (redis.RedisError, ValueError, OSError) as exc:
+        raise SearchError('cache_unavailable') from exc

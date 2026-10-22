@@ -1,0 +1,5 @@
+nicegui==3.18.0
+openai==2.31.0
+python-dotenv==1.2.4
+requests==2.34.2
+redis==8.1.0

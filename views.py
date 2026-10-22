@@ -17,23 +17,25 @@ def account_area():
     ui.link('连接 GitHub', '/auth/github').classes('button-link header-connect').bind_visibility_from(
         storage, 'github_user', backward=lambda user: not bool(user.get('login')))
 
-    with ui.link(target='/stars').classes('account-link').bind_visibility_from(
+    with ui.row().classes('account-area').bind_visibility_from(
             storage, 'github_user', backward=lambda user: bool(user.get('login'))):
-        with ui.avatar(size='38px', color='secondary').classes('account-avatar'):
-            avatar = ui.image().props('alt="GitHub 用户头像" no-spinner no-transition').bind_source_from(
-                storage, 'github_user', backward=lambda user: user.get('avatar_url') or '')
-            avatar.bind_visibility_from(storage, 'github_user', backward=lambda user: bool(user.get('avatar_url')))
-            # URL 缺失或图片加载失败时都显示默认人像。
-            with avatar.add_slot('error'):
-                ui.icon('person', size='26px')
-            ui.icon('person', size='26px').bind_visibility_from(
-                storage, 'github_user', backward=lambda user: not bool(user.get('avatar_url')))
-        with ui.column().classes('account-info'):
-            ui.label().classes('account-name').bind_text_from(
-                storage, 'github_user', backward=lambda user: user.get('name') or user.get('login', ''))
-            ui.label().classes('account-login').bind_text_from(
-                storage, 'github_user', backward=lambda user: '@' + user.get('login', ''))
-        ui.icon('arrow_forward', size='17px').classes('account-arrow')
+        with ui.link(target='/stars').classes('account-link'):
+            with ui.avatar(size='38px', color='secondary').classes('account-avatar'):
+                avatar = ui.image().props('alt="GitHub 用户头像" no-spinner no-transition').bind_source_from(
+                    storage, 'github_user', backward=lambda user: user.get('avatar_url') or '')
+                avatar.bind_visibility_from(storage, 'github_user', backward=lambda user: bool(user.get('avatar_url')))
+                # URL 缺失或图片加载失败时都显示默认人像。
+                with avatar.add_slot('error'):
+                    ui.icon('person', size='26px')
+                ui.icon('person', size='26px').bind_visibility_from(
+                    storage, 'github_user', backward=lambda user: not bool(user.get('avatar_url')))
+            with ui.column().classes('account-info'):
+                ui.label().classes('account-name').bind_text_from(
+                    storage, 'github_user', backward=lambda user: user.get('name') or user.get('login', ''))
+                ui.label().classes('account-login').bind_text_from(
+                    storage, 'github_user', backward=lambda user: '@' + user.get('login', ''))
+            ui.icon('arrow_forward', size='17px').classes('account-arrow')
+        ui.link('退出', '/auth/logout').classes('logout-link')
 
 
 def page_shell(title: str, active: str = ''):
@@ -60,6 +62,7 @@ def page_shell(title: str, active: str = ''):
     with ui.element('footer').classes('site-footer'):
         ui.label('LookingFor').classes('footer-brand')
         ui.label('Stay curious. Keep discovering.').classes('footer-note')
+        ui.link('隐私与数据', '/privacy').classes('footer-link')
         ui.label('让每一次好奇，都有新的去处。').classes('footer-chinese')
     return content
 
@@ -147,7 +150,7 @@ def notice(message: str):
         ui.label(message)
 
 
-def repo_card(repo: dict, starred_ids: set[int]):
+def repo_card(repo: dict, starred_ids: set[int], *, is_new: bool = False):
     """一张仓库卡片。外部文字交给 label/link 渲染，不拼接 HTML。"""
     full_name = repo.get('full_name') or 'Unnamed repository'
     owner, _, name = full_name.partition('/')
@@ -156,10 +159,13 @@ def repo_card(repo: dict, starred_ids: set[int]):
     with ui.element('article').classes('repo-card'):
         with ui.row().classes('repo-top'):
             ui.icon('bookmarks' if repo.get('id') in starred_ids else 'book', size='21px').classes('repo-icon')
-            if repo.get('id') in starred_ids:
-                ui.label('已 Star').classes('starred-badge')
-            else:
-                ui.label('开源仓库').classes('repo-kind')
+            with ui.row().classes('repo-badges'):
+                if repo.get('id') in starred_ids:
+                    ui.label('已 Star').classes('starred-badge')
+                if is_new:
+                    ui.label('新发现').classes('new-badge')
+                if repo.get('id') not in starred_ids and not is_new:
+                    ui.label('开源仓库').classes('repo-kind')
         ui.label(owner if name else 'GitHub').classes('repo-owner')
         if valid_url:
             ui.link(name or full_name, repo_url, new_tab=True).classes('repo-name').props('rel="noopener noreferrer"')
@@ -188,7 +194,7 @@ def repo_card(repo: dict, starred_ids: set[int]):
 
 
 def repository_browser(repos: list[dict], *, starred_ids: set[int] | None = None,
-                       keywords: list[str] | None = None):
+                       keywords: list[str] | None = None, remote: bool = False):
     """只筛选传入的列表；不会重新搜索，不改变后端排序，也不排除已 Star 项目。"""
     starred_ids = starred_ids or set()
     state = {'query': '', 'language': '全部语言', 'limit': 12}
@@ -241,7 +247,8 @@ def repository_browser(repos: list[dict], *, starred_ids: set[int] | None = None
 
         with ui.row().classes('results-summary').props('role="status" aria-live="polite"'):
             ui.label(f'{len(filtered):,} 个仓库').classes('result-count')
-            ui.label('收藏过的，也可能带来新灵感。').classes('muted')
+            ui.label('结果按批次显示；最新一批的卡片会标记“新发现”。' if remote
+                     else '收藏过的，也可能带来新灵感。').classes('muted')
         if not filtered:
             with ui.column().classes('filter-empty'):
                 ui.icon('search_off', size='32px')
@@ -249,14 +256,57 @@ def repository_browser(repos: list[dict], *, starred_ids: set[int] | None = None
                 ui.label('试试更短的词，或切换到其他语言。').classes('muted')
                 ui.button('清除筛选', on_click=reset_filters).props('outline no-caps')
             return
-        with ui.element('div').classes('repo-grid'):
-            for repo in filtered[:state['limit']]:
-                repo_card(repo, starred_ids)
-        with ui.column().classes('browse-bottom'):
-            ui.label(f'已显示 {min(state["limit"], len(filtered))} / {len(filtered)} 个仓库').classes('muted')
-            if state['limit'] < len(filtered):
-                ui.button('再看看更多', icon='expand_more', on_click=show_more).props('outline no-caps').classes('load-more')
-            else:
-                ui.label('这批仓库看完了，去看看让你好奇的那一个吧。').classes('end-note')
+
+        if remote:
+            grouped: dict[int, list[dict]] = {}
+            for repo in filtered:
+                batch = repo.get('_batch')
+                grouped.setdefault(batch if isinstance(batch, int) and batch > 0 else 1, []).append(repo)
+            latest = max(grouped)
+
+            for batch in sorted(grouped):
+                repos_in_batch = sorted(
+                    grouped[batch],
+                    key=lambda repo: (
+                        len(repo.get('matched_keywords') or []),
+                        repo.get('stargazers_count') or 0,
+                    ),
+                    reverse=True,
+                )
+                if latest == 1:
+                    title = '初始推荐'
+                elif batch == latest:
+                    title = f'第 {batch} 批 · 本次新增'
+                else:
+                    title = f'第 {batch} 批 · 较早发现'
+
+                with ui.row().classes('batch-header').props(f'id="batch-{batch}"'):
+                    ui.label(title).classes('batch-title')
+                    ui.label(f'{len(repos_in_batch)} 个仓库').classes('batch-meta')
+                with ui.element('div').classes('repo-grid'):
+                    for repo in repos_in_batch:
+                        repo_card(repo, starred_ids, is_new=(latest > 1 and batch == latest))
+
+            with ui.column().classes('browse-bottom'):
+                ui.label(f'已加载 {len(filtered)} 个仓库，全部显示。').classes('muted')
+                ui.label('需要更多时，点击下方的“继续发现下一批”。').classes('end-note')
+        else:
+            with ui.element('div').classes('repo-grid'):
+                for repo in filtered[:state['limit']]:
+                    repo_card(repo, starred_ids)
+            with ui.column().classes('browse-bottom'):
+                ui.label(f'已显示 {min(state["limit"], len(filtered))} / {len(filtered)} 个仓库').classes('muted')
+                if state['limit'] < len(filtered):
+                    ui.button('显示更多已加载的仓库', icon='expand_more', on_click=show_more).props('outline no-caps').classes('load-more')
+                else:
+                    ui.label('这批仓库看完了，去看看让你好奇的那一个吧。').classes('end-note')
 
     results()
+
+    def refresh():
+        languages = ['全部语言'] + sorted({repo['language'] for repo in repos if repo.get('language')})
+        language_input.options = languages
+        language_input.update()
+        results.refresh()
+
+    return refresh

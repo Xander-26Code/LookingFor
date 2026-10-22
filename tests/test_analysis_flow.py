@@ -6,6 +6,7 @@ import json
 import sqlite3
 import tempfile
 import time
+from functools import partial
 from pathlib import Path
 from types import SimpleNamespace
 import unittest
@@ -13,6 +14,7 @@ from unittest.mock import patch
 
 import analyse
 import database
+import analysis_jobs
 from openai import OpenAIError
 
 with patch('nicegui.ui.run'), patch('dotenv.load_dotenv'):
@@ -26,6 +28,8 @@ class AnalysisFlowTests(unittest.TestCase):
         self.root = Path(temporary.name)
         self.patch(database, 'DATABASE_PATH', self.root / 'test.db')
         database.init_db()
+        self.patch(database, 'claim_analysis', side_effect=partial(database.claim_analysis, cooldown=0))
+        self.patch(analysis_jobs, 'POLL_SECONDS', 0.01)
         database.save_user({'id': 42, 'login': 'alice'})
         database.save_user({'id': 99, 'login': 'bob'})
         self.session = {'github_user': {'id': 42, 'login': 'alice'}, 'github_token': 'fake-token'}
@@ -73,6 +77,15 @@ class AnalysisFlowTests(unittest.TestCase):
         self.assertIn('example/bob', prompt)
         self.assertNotIn('example/alice', prompt)
 
+    def test_model_keywords_are_capped(self):
+        repos = self.stars()
+        keywords = [f'keyword {index}' for index in range(90)]
+        self.create.return_value.choices[0].message.content = json.dumps({
+            'interests': [{'search_keywords': keywords}]
+        })
+        result = analyse.generate_search_keywords(repos)
+        self.assertEqual(len(result), analyse.MAX_SEARCH_KEYWORDS)
+
     def test_empty_stars_do_not_call_model(self):
         with self.assertRaises(ValueError):
             analyse.generate_search_keywords([])
@@ -108,6 +121,15 @@ class AnalysisFlowTests(unittest.TestCase):
         database.save_analysis(42, data['version'], ['python'])
         self.assertTrue(asyncio.run(main.analyse_and_open_search()))
         self.client_factory.assert_not_called()
+
+    def test_identical_resync_reuses_analysis_without_calling_model(self):
+        repos = self.stars()
+        data = database.load_user_data(42)
+        database.save_analysis(42, data['version'], ['python'])
+        database.save_star_snapshot(42, [{**repos[0], 'stargazers_count': 100}])
+        self.assertTrue(asyncio.run(main.analyse_and_open_search()))
+        self.client_factory.assert_not_called()
+        self.navigate.assert_called_once_with('/search')
 
     def test_old_model_result_does_not_replace_new_snapshot_analysis(self):
         self.stars()
@@ -161,13 +183,16 @@ class AnalysisFlowTests(unittest.TestCase):
             database.save_analysis(user_id, data['version'], [keyword])
         for user_id, keyword in ((42, 'alice tools'), (99, 'bob tools')):
             self.session['github_user'] = {'id': user_id, 'login': 'test'}
-            with patch.object(main, 'get_cached_result', return_value={'items': [{'id': user_id}]}) as cached, \
-                    patch.object(main, 'repository_browser') as browser, patch.object(main, 'search_one') as fetch:
+            with patch('discovery.search_one', return_value=SimpleNamespace(
+                    source='cache', data={'items': [{'id': user_id}], 'has_more': False,
+                                          'limit_reached': False, 'incomplete_results': False})) as fetch, \
+                    patch.object(main, 'repository_browser') as browser, \
+                    patch.object(main.ui, 'button'), patch.object(main.ui, 'timer'):
                 asyncio.run(main.search_repositories())
-                cached.assert_called_once_with(main.build_query([keyword]))
+                from search import build_query
+                fetch.assert_awaited_once_with(build_query([keyword]), user_id, 'fake-token', page=1)
                 self.assertEqual(browser.call_args.kwargs['keywords'], [keyword])
                 self.assertEqual(browser.call_args.kwargs['starred_ids'], {user_id})
-                fetch.assert_not_called()
 
     def test_slow_model_does_not_block_other_async_work(self):
         self.stars()
@@ -184,6 +209,28 @@ class AnalysisFlowTests(unittest.TestCase):
 
         with patch.object(main, 'generate_search_keywords', side_effect=slow_model):
             asyncio.run(check())
+
+    def test_two_pages_share_one_model_call(self):
+        self.stars()
+        calls = []
+
+        def model(repos):
+            calls.append(1)
+            time.sleep(0.1)
+            return ['python']
+
+        async def scenario():
+            with patch.object(main, 'generate_search_keywords', side_effect=model):
+                results = await asyncio.gather(
+                    main.analyse_and_open_search(),
+                    main.analyse_and_open_search(),
+                )
+            await asyncio.gather(*list(analysis_jobs._tasks))
+            return results
+
+        results = asyncio.run(scenario())
+        self.assertEqual(results, [True, True])
+        self.assertEqual(len(calls), 1)
 
 
 if __name__ == '__main__':

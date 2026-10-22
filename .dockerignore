@@ -1,0 +1,10 @@
+.git
+.env
+.nicegui
+lookingfor.db
+lookingfor.db-*
+__pycache__
+*.py[cod]
+redisdemo
+backups
+tests
