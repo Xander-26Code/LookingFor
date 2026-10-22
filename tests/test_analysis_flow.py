@@ -105,6 +105,24 @@ class AnalysisFlowTests(unittest.TestCase):
         self.assertEqual(self.create.call_count, 2)
         self.assertNotIn('reasoning_effort', self.create.call_args_list[1].kwargs)
 
+    def test_truncated_json_retries_without_thinking(self):
+        repos = self.stars()
+        truncated = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason='length',
+            message=SimpleNamespace(content='{"summary": "unterminated'),
+        )])
+        good = SimpleNamespace(choices=[SimpleNamespace(
+            finish_reason='stop',
+            message=SimpleNamespace(content=json.dumps({
+                'interests': [{'search_keywords': ['python']}]
+            })),
+        )])
+        self.create.side_effect = [truncated, good]
+        result = analyse.generate_search_keywords(repos)
+        self.assertEqual(result, ['python'])
+        self.assertEqual(self.create.call_count, 2)
+        self.assertNotIn('reasoning_effort', self.create.call_args_list[1].kwargs)
+
     def test_long_repository_metadata_is_compacted_before_model_call(self):
         repos = [
             {

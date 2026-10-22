@@ -278,14 +278,21 @@ and every referenced interest name exists in your output.
 """
 
 def _completion_content(client, messages: list[dict]) -> str:
-    """优先用 thinking 生成；若 content 为空，则关闭 thinking 重试一次。"""
+    """优先用 thinking；若为空或 JSON 被截断，关闭 thinking 再重试。"""
     attempts = (
         {
             "max_tokens": 8192,
             "reasoning_effort": "high",
             "extra_body": {"thinking": {"type": "enabled"}},
         },
-        {"max_tokens": 4096},
+        {
+            "max_tokens": 8192,
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
+        {
+            "max_tokens": 16384,
+            "extra_body": {"thinking": {"type": "disabled"}},
+        },
     )
     last_reason = None
     for options in attempts:
@@ -300,10 +307,19 @@ def _completion_content(client, messages: list[dict]) -> str:
             continue
         choice = response.choices[0]
         content = choice.message.content
-        if content and content.strip():
-            return content
-        last_reason = choice.finish_reason or "empty"
-    raise ValueError(f"model returned empty content (finish_reason={last_reason})")
+        if content is None or not content.strip():
+            last_reason = choice.finish_reason or "empty"
+            continue
+        try:
+            profile = json.loads(content)
+        except json.JSONDecodeError:
+            last_reason = f"invalid_json:{choice.finish_reason}"
+            continue
+        if not isinstance(profile, dict):
+            last_reason = f"not_object:{choice.finish_reason}"
+            continue
+        return content
+    raise ValueError(f"model returned no valid JSON (last={last_reason})")
 
 
 def generate_search_keywords(starred_repos: list[dict]) -> list[str]:
