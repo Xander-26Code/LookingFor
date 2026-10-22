@@ -3,6 +3,7 @@
 import asyncio
 import importlib.util
 import json
+import re
 import sqlite3
 import tempfile
 import time
@@ -85,6 +86,69 @@ class AnalysisFlowTests(unittest.TestCase):
         })
         result = analyse.generate_search_keywords(repos)
         self.assertEqual(len(result), analyse.MAX_SEARCH_KEYWORDS)
+
+    def test_long_repository_metadata_is_compacted_before_model_call(self):
+        repos = [
+            {
+                'full_name': f'example/repo-{index}',
+                'description': 'x' * 5000,
+                'language': 'Python',
+                'topics': ['topic-' + 'y' * 100 for _ in range(20)],
+                'html_url': f'https://github.com/example/repo-{index}',
+            }
+            for index in range(118)
+        ]
+        result = analyse.generate_search_keywords(repos)
+        self.assertEqual(result, ['python', 'agent tools'])
+        prompt = self.create.call_args.kwargs['messages'][1]['content']
+        self.assertIn('example/repo-0', prompt)
+        self.assertNotIn('x' * 1000, prompt)
+        self.assertLess(len(prompt), analyse.MAX_INPUT_CHARS + 2000)
+
+    def test_large_collection_is_split_into_multiple_model_calls(self):
+        repos = [
+            {
+                'full_name': f'example/repo-{index}',
+                'description': 'x' * 5000,
+                'language': ['Python', 'Rust', 'Go'][index % 3],
+                'topics': [f'topic-{index % 12}', 'y' * 100],
+                'html_url': f'https://github.com/example/repo-{index}',
+            }
+            for index in range(500)
+        ]
+        result = analyse.generate_search_keywords(repos)
+        self.assertEqual(result, ['python', 'agent tools'])
+        self.assertGreater(self.create.call_count, 1)
+        self.assertLessEqual(self.create.call_count, analyse.MAX_MODEL_CALLS)
+        prompts = [
+            call.kwargs['messages'][1]['content']
+            for call in self.create.call_args_list
+        ]
+        self.assertTrue(any('example/repo-0' in prompt for prompt in prompts))
+        self.assertTrue(all(
+            len(prompt) < analyse.MAX_INPUT_CHARS + 2000
+            for prompt in prompts
+        ))
+        represented = {
+            int(number)
+            for prompt in prompts
+            for number in re.findall(r'example/repo-(\d+)', prompt)
+        }
+        self.assertEqual(represented, set(range(500)))
+
+    def test_very_large_collection_is_capped_to_max_model_calls(self):
+        repos = [
+            {
+                'full_name': f'example/repo-{index}',
+                'description': 'x' * 5000,
+                'language': ['Python', 'Rust', 'Go'][index % 3],
+                'topics': [f'topic-{index % 12}', 'y' * 100],
+                'html_url': f'https://github.com/example/repo-{index}',
+            }
+            for index in range(1000)
+        ]
+        analyse.generate_search_keywords(repos)
+        self.assertLessEqual(self.create.call_count, analyse.MAX_MODEL_CALLS)
 
     def test_empty_stars_do_not_call_model(self):
         with self.assertRaises(ValueError):
