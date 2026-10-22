@@ -6,3 +6,4 @@ __pycache__/
 interest_input.json
 search_keywords.json
 starred_repos.json
+redisdemo/

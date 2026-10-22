@@ -185,7 +185,7 @@ def repo_card(repo: dict, starred_ids: set[int]):
                     ui.icon('north_east', size='16px')
         matched = repo.get('matched_keywords') or []
         if matched:
-            ui.label('匹配 · ' + ' / '.join(matched)).classes('match-note').tooltip(' / '.join(matched))
+            ui.label('关键词组 · ' + ' / '.join(matched)).classes('match-note').tooltip('这个仓库出现在这组关键词的搜索结果中。')
 
 
 def repository_browser(repos: list[dict], *, starred_ids: set[int] | None = None,
@@ -200,7 +200,7 @@ def repository_browser(repos: list[dict], *, starred_ids: set[int] | None = None
             with ui.row().classes('topic-list'):
                 for keyword in keywords:
                     ui.label(keyword).classes('topic-chip')
-            ui.label('每个关键词最多获取 10 个结果；保留 GitHub 按 Star 降序的返回顺序，合并重复仓库。').classes('muted')
+            ui.label('关键词按每组最多 4 个合并搜索；结果缓存在 Redis 6 小时，已缓存的组不会重复请求 GitHub。').classes('muted')
 
     def set_query(event):
         state['query'] = (event.value or '').strip().casefold()

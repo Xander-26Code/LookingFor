@@ -10,11 +10,18 @@ import os
 import requests
 from openai import OpenAIError
 from analyse import generate_search_keywords
-from search import search
+from search import (
+    SearchError,
+    build_query,
+    build_query_groups,
+    get_cached_result,
+    search_one,
+)
 from views import page_shell, page_heading, home_page, empty_state, notice, repository_browser
 # Load environment variables from .env file
 load_dotenv()
 project_dir = Path(__file__).resolve().parent
+MAX_NEW_GROUPS = 20  # 每次最多抓 20 组未缓存结果，给 30 次/分钟留余量
 
 
 def load_saved_stars():
@@ -112,12 +119,14 @@ async def sync_github_stars(code: str, state: str):
         if not isinstance(user_info, dict) or not user_info.get('login'):
             ui.label("GitHub returned user information without a username. Please sign in again.")
             return
-        # 保存已验证的公开资料，其他页面就能显示同一个账号；不保存 access_token。
+        # 保存已验证的公开资料；搜索接口也需要 token（10 次/分 → 30 次/分）。
+        # token 只保存在本机 .nicegui 会话文件里，该目录已在 .gitignore 中。
         app.storage.user['github_user'] = {
             'login': user_info['login'],
             'name': user_info.get('name') or user_info['login'],
             'avatar_url': user_info.get('avatar_url') or '',
         }
+        app.storage.user['github_token'] = access_token
         notice(f"你好，{user_info.get('login')}。已成功连接 GitHub。")
         USERNAME = user_info.get('login')
     else:
@@ -270,13 +279,59 @@ def stars_page():
             return
         repository_browser(repos, starred_ids={repo.get('id') for repo in repos})
 
+def current_user_id() -> str:
+    """登录用户用 GitHub login 作为限流身份。"""
+    return (app.storage.user.get('github_user') or {}).get('login', '')
+
+
+def search_error_message(code: str) -> str:
+    if code.startswith('http_'):
+        return f'GitHub 返回了 HTTP {code[5:]}'
+    return {
+        'timeout': '请求 GitHub 超时了',
+        'network': '无法连接 GitHub',
+        'unauthorized': 'GitHub 授权已失效',
+        'json': 'GitHub 返回了无法解析的数据',
+        'unexpected': 'GitHub 返回了意外的数据结构',
+        'rate_limit': 'GitHub 搜索额度用完了',
+        'busy': '同一批结果正在被另一个请求更新',
+    }.get(code, '搜索暂时失败')
+
+
+def merge_group_items(repos_by_id: dict, items: list[dict], group: list[str]) -> None:
+    """把一组搜索结果合并进 repos_by_id。"""
+    for repo in items:
+        if not isinstance(repo, dict) or not isinstance(repo.get('id'), int):
+            continue
+        if repo['id'] not in repos_by_id:
+            repos_by_id[repo['id']] = {**repo, 'matched_keywords': []}
+        for keyword in group:
+            if keyword not in repos_by_id[repo['id']]['matched_keywords']:
+                repos_by_id[repo['id']]['matched_keywords'].append(keyword)
+
+
 @ui.page('/search')
 def search_page():
     with page_shell('探索仓库', 'search'):
-        page_heading('A NEW PATH TO EXPLORE', '循着兴趣，发现更多。', '从你的收藏中提炼关键词，寻找值得点开的仓库。熟悉的项目，也会留在这里。')
+        page_heading(
+            'A NEW PATH TO EXPLORE',
+            '循着兴趣，发现更多。',
+            '从你的收藏中提炼关键词，寻找值得点开的仓库。熟悉的项目，也会留在这里。',
+        )
+
+        user = app.storage.user.get('github_user') or {}
+        if not user.get('login'):
+            empty_state('先连接 GitHub', '登录后才能根据你的收藏生成推荐。')
+            return
+
+        if not app.storage.user.get('github_token'):
+            empty_state('需要重新授权一次', '为了使用搜索额度，请重新连接 GitHub。')
+            return
+
         with ui.row().classes('items-center') as loading:
             ui.spinner(size='24px')
-            ui.label('正在寻找匹配的仓库，请稍候……')
+            ui.label('正在读取缓存并补充搜索结果，请稍候……')
+
         results = ui.column().classes('w-full').style('align-items: stretch')
 
         async def load_results():
@@ -316,39 +371,105 @@ async def search_repositories():
         return
 
     selected_keywords = list(dict.fromkeys(keywords))
-    # Index by repository ID to merge duplicates and keep their matching keywords.
-    repos_by_id = {}
-    successful_searches = 0
-    partial_results = False
-    for keyword in selected_keywords:
-        result = await search(keyword)
+    groups = build_query_groups(selected_keywords)
+    total_groups = len(groups)
+
+    user_id = current_user_id()
+    token = app.storage.user.get('github_token')
+    if not user_id or not token:
+        empty_state('需要重新连接 GitHub', '登录并授权后才能生成推荐。')
+        return
+
+    repos_by_id: dict[int, dict] = {}
+    pending = []
+    cached_groups = 0
+    fetched_groups = 0
+    rate_limited = False
+    wait_seconds = 0.0
+    failed_code = None
+    incomplete = False
+
+    # 已缓存的组先直接合并，不消耗请求和令牌。
+    for group in groups:
+        query = build_query(group)
+        cached = get_cached_result(query)
+        if isinstance(cached, dict) and isinstance(cached.get('items'), list):
+            cached_groups += 1
+            if cached.get('incomplete_results'):
+                incomplete = True
+            merge_group_items(repos_by_id, cached['items'], group)
+        else:
+            pending.append((group, query))
+
+    # 本次最多抓 MAX_NEW_GROUPS 组未缓存的结果。
+    for group, query in pending[:MAX_NEW_GROUPS]:
+        try:
+            result = await search_one(query, user_id, token)
+        except SearchError as exc:
+            failed_code = exc.code
+            if exc.code == 'unauthorized' and 'github_token' in app.storage.user:
+                del app.storage.user['github_token']
+            if exc.code == 'rate_limit':
+                rate_limited = True
+            break
+
         if result is None:
-            ui.label(f'Search failed for: {keyword}. Stopped further requests.')
-            partial_results = True
+            return  # 服务关闭或任务被取消
+
+        if result.source == 'rate_limited':
+            rate_limited = True
+            wait_seconds = result.wait
             break
-        if not isinstance(result, dict) or not isinstance(result.get('items'), list):
-            ui.label(f'Unexpected search response for: {keyword}.')
-            partial_results = True
+        if result.source == 'busy':
+            failed_code = 'busy'
             break
-        items = result['items']
-        if not all(isinstance(repo, dict) and isinstance(repo.get('id'), int) for repo in items):
-            ui.label(f'Invalid repository data for: {keyword}.')
-            partial_results = True
+        if not isinstance(result.data, dict) or not isinstance(result.data.get('items'), list):
+            failed_code = 'unexpected'
             break
-        successful_searches += 1
-        if result.get('incomplete_results'):
-            ui.label(f'GitHub reported incomplete results for: {keyword}.')
-            partial_results = True
-        for repo in items:
-            if repo['id'] not in repos_by_id:
-                repos_by_id[repo['id']] = {**repo, 'matched_keywords': []}
-            repos_by_id[repo['id']]['matched_keywords'].append(keyword)
+
+        if result.source == 'cache':
+            cached_groups += 1
+        else:
+            fetched_groups += 1
+
+        if result.data.get('incomplete_results'):
+            incomplete = True
+        merge_group_items(repos_by_id, result.data['items'], group)
 
     all_repos = list(repos_by_id.values())
-    if partial_results:
-        notice(f'{successful_searches} 次搜索成功；部分搜索失败或不完整，先看看已经找到的仓库。')
-    elif not all_repos:
-        notice('GitHub 暂时没有返回匹配仓库，可以调整兴趣关键词后再来探索。')
+    completed_groups = cached_groups + fetched_groups
+    skipped_groups = max(0, total_groups - completed_groups)
+
+    if rate_limited:
+        if wait_seconds > 0:
+            wait_text = f'约 {max(1, round(wait_seconds))} 秒后'
+        else:
+            wait_text = '稍后'
+        notice(f'已拿到 {completed_groups}/{total_groups} 组结果。GitHub 搜索额度用完了，建议 {wait_text}再试。')
+    elif failed_code == 'unauthorized':
+        notice('GitHub 授权已失效，请重新连接。已先展示拿到的结果。')
+        ui.link('重新连接 GitHub', '/auth/github').classes('text-link')
+    elif failed_code:
+        notice(f'{search_error_message(failed_code)}，已先展示拿到的结果。')
+    elif skipped_groups:
+        notice(f'本次先更新 {fetched_groups} 组，剩余 {skipped_groups} 组已保留，下次打开会继续。')
+    elif incomplete:
+        notice('GitHub 提示部分搜索结果可能不完整，先看看已经找到的仓库。')
+
+    if cached_groups:
+        ui.label(f'本次 {total_groups} 组中，{cached_groups} 组来自 Redis 缓存。').classes('muted')
+
+    if not all_repos:
+        if rate_limited:
+            empty_state('这次没有拿到结果', 'GitHub 搜索额度暂时用完了，等一会儿再试。')
+        elif failed_code:
+            empty_state('这次没有拿到结果', f'{search_error_message(failed_code)}，请稍后再试。')
+        elif skipped_groups:
+            empty_state('这次先更新了一部分', f'还有 {skipped_groups} 组没有抓取，下次打开会继续。')
+        else:
+            empty_state('这次没有找到仓库', 'GitHub 暂时没有返回匹配仓库，可以调整兴趣关键词后再来探索。')
+        return
+
     saved_stars = load_saved_stars() or []
     repository_browser(all_repos, starred_ids={repo.get('id') for repo in saved_stars}, keywords=selected_keywords)
 
