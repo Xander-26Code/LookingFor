@@ -1,110 +1,72 @@
 <div align="center">
-  <img src="assets/readme/hero.png" alt="LookingFor home page" width="100%">
   <h1>LookingFor</h1>
   <p><strong>Rediscover what you starred. Find what comes next.</strong></p>
-  <p><em>AI-assisted GitHub repository discovery for people with a very full Stars list.</em></p>
+  <p>Explore GitHub repositories starting from your Stars, with AI-generated interest keywords.</p>
+  <p>
+    <a href="https://repofind.click"><strong>Try the beta</strong></a>
+    · <a href="#quick-start">Run locally</a>
+    · <a href="DEPLOYMENT.md">Self-host</a>
+    · <a href="#中文说明">中文说明</a>
+  </p>
+  <p>
+    <img src="https://img.shields.io/badge/Python-3.13-blue?logo=python" alt="Python 3.13">
+    <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green" alt="MIT License"></a>
+  </p>
 </div>
 
-<div align="center">
-  <a href="https://github.com/Xander-26Code/LookingFor/stargazers"><img src="https://img.shields.io/github/stars/Xander-26Code/LookingFor?style=flat&logo=github" alt="GitHub stars"></a>
-  <a href="https://github.com/Xander-26Code/LookingFor/forks"><img src="https://img.shields.io/github/forks/Xander-26Code/LookingFor?style=flat&logo=github" alt="GitHub forks"></a>
-  <img src="https://img.shields.io/badge/Python-3.13-blue?style=flat&logo=python" alt="Python 3.13">
-  <img src="https://img.shields.io/badge/NiceGUI-3.18-4b8bbe?style=flat" alt="NiceGUI 3.18">
-  <img src="https://img.shields.io/badge/DeepSeek-API-4d6bfe?style=flat" alt="DeepSeek API">
-  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=flat" alt="MIT License"></a>
-</div>
+Your Stars list records things that caught your attention. LookingFor uses that collection to search for related repositories, so you can keep browsing when GitHub Explore runs out of suggestions—and revisit projects you forgot you saved.
 
-<div align="center">
-  <a href="https://repofind.click"><strong>Live beta</strong></a>
-  ·
-  <a href="DEPLOYMENT.md">Deployment guide</a>
-  ·
-  <a href="#中文说明">中文说明</a>
-</div>
+**Connect GitHub → sync your Stars → explore matching repositories → load another batch.**
 
-> Live beta: [repofind.click](https://repofind.click). HTTPS is managed by Caddy and Let’s Encrypt.
+The [hosted beta](https://repofind.click) requires GitHub sign-in and a nonempty Stars list. Repository metadata is sent to DeepSeek for interest analysis; see [data and privacy](#data-and-privacy) before connecting. You can view the demo below without signing in.
 
----
+## See the results
 
-## 🎯 Overview
+![LookingFor results: repository descriptions, topics, Star counts, and separate Starred and New badges](assets/readme/batch.jpg)
 
-> Most repository discovery tools start from a search box. LookingFor starts from **what you already saved**.
+Each card shows a description, topics, language, Star count, and a link to GitHub. **Starred** identifies a repository already in your synced collection. **New** means added in the latest batch of this browsing session; it does not mean newly created or previously unknown to you.
 
-LookingFor connects to your GitHub account, reads the repositories you have starred, and turns them into an interest profile used to search for related open-source projects. It is built for people whose Stars list has become a small, messy map of their curiosity.
+Already-starred repositories intentionally remain eligible. Rediscovery is part of the product.
 
-1. Sign in with GitHub.
-2. Sync your starred repositories.
-3. Let DeepSeek turn the collection into a compact interest profile and search keywords.
-4. Explore matching repositories in batches, including projects you have already starred.
-5. Keep fetching new batches as long as GitHub has more results.
+<details>
+<summary>Watch the browsing demo</summary>
 
-The app is deliberately a single long-running Python service: NiceGUI for the UI, SQLite for user data, Redis for cache and coordination, and GitHub + DeepSeek as external APIs.
+[![LookingFor browsing demo](assets/readme/demo.gif)](assets/readme/demo.mp4)
 
----
+[Watch the MP4](assets/readme/demo.mp4) · [Explore page screenshot](assets/readme/search.jpg)
 
-## 🎬 Demo
+</details>
 
-<div align="center">
-  <a href="assets/readme/demo.mp4">
-    <img src="assets/readme/demo.gif" alt="LookingFor demo: exploring repositories by interest" width="100%">
-  </a>
-  <p><a href="assets/readme/demo.mp4">▶ Watch the full 25-second demo (MP4)</a></p>
-</div>
+## What you can do today
 
-<p align="center">
-  <img src="assets/readme/search.jpg" alt="Search results grouped by batch" width="49%">
-  <img src="assets/readme/batch.jpg" alt="A new batch with New badges" width="49%">
-</p>
-<p align="center"><sub>Search results grouped by batch · New discoveries marked “New”</sub></p>
+- **Start from your collection.** Sync your own Stars and generate search keywords from repository descriptions, topics, and languages.
+- **Browse beyond one page.** Load successive batches, with duplicate repositories merged within the current exploration. GitHub search limits still apply.
+- **Revisit saved projects.** Keep starred and unstarred results together, with saved projects labeled.
+- **Narrow the loaded results.** Filter by language or search their names, descriptions, and topics.
+- **Use Chinese or English.** Switch the interface language from the header.
+- **Control your account data.** Inspect synced Stars, sign out, or delete stored account data.
 
----
+## How discovery works today
 
-## ✨ Features
-
-- **GitHub OAuth login** — sign-in is required; there is no anonymous mode.
-- **Star sync** — imports the authenticated user's starred repositories, with per-user isolation.
-- **AI interest analysis** — DeepSeek generates English search keywords from repository metadata.
-- **Batched analysis** — large collections are split by input budget (up to 6 model calls), with a representative fallback for very large lists.
-- **Resilient model calls** — retries without thinking when the model returns empty content or truncated JSON.
-- **Repository search** — GitHub search grouped by keywords, with Redis caching, single-flight locks, and rate limiting.
-- **Continue discovering** — pages advance by group; new results are appended as a new batch and marked as new.
-- **Chinese / English UI** — switch language from the header; the preference is stored per session.
-- **Account controls** — sign out, privacy/data explanation, and irreversible data deletion.
-- **Operational basics** — `/health`, Docker Compose, Caddy HTTPS, SQLite online backups, structured logs.
-- **Tests** — 62 unit tests covering account auth, i18n, analysis flow, database, search guard, and discovery.
-
----
-
-## 🧱 Architecture
-
-```mermaid
-flowchart LR
-    Browser["Browser<br/>NiceGUI WebSocket"] --> App["NiceGUI app"]
-    App --> DB[("SQLite<br/>users / stars / analyses")]
-    App --> Redis[("Redis<br/>cache / locks / rate limits")]
-    App --> GitHub["GitHub API<br/>OAuth + Stars + Search"]
-    App --> DeepSeek["DeepSeek API<br/>interest keywords"]
-    Caddy["Caddy<br/>HTTPS"] --> App
+```text
+Your starred repositories
+        ↓
+DeepSeek interest analysis → saved search keywords
+        ↓
+GitHub public repository search, ordered by Star count
+        ↓
+Merge duplicates and group results into browsing batches
+        ↓
+Within each batch: collected query-keyword count, then Star count
 ```
 
-Analysis is executed as an independent background job. Refreshing or closing a page does not cancel the model call, and multiple pages requesting the same analysis join the existing job instead of paying for a duplicate call.
+**Personalization currently determines what to search for. Ranking is still a simple heuristic.** The model produces interests and supporting repositories, but only the search keywords are retained. GitHub searches use `sort=stars&order=desc`, so popular projects tend to dominate the candidate pool.
 
----
+The current “Matched keywords” label lists keywords from the query groups that returned a repository. It is **query provenance, not proof that every listed keyword matches**. That count also affects ordering within each batch; replacing it with verified relevance is a planned improvement.
 
-## 🧰 Tech stack
+There is no trained recommendation model, semantic reranker, or measured relevance improvement yet. The [roadmap](#roadmap) focuses on testing and improving discovery quality.
 
-| Layer | Technology |
-|---|---|
-| Language | Python 3.13 |
-| Web UI | NiceGUI 3.18 |
-| Model | DeepSeek via the OpenAI-compatible SDK |
-| Persistence | SQLite in WAL mode |
-| Cache / coordination | Redis 7+ |
-| Deployment | Docker Compose + Caddy |
-
----
-
-## 🚀 Quick start
+## Quick start
 
 ### Prerequisites
 
@@ -128,7 +90,7 @@ pip install -r requirements.txt
 Use an existing Redis instance, or run one locally:
 
 ```bash
-docker run --rm -p 6379:6379 redis:7-alpine
+docker run --rm -p 127.0.0.1:6379:6379 redis:7-alpine
 ```
 
 ### 3. Configure
@@ -169,7 +131,9 @@ In the GitHub App settings:
 - **Permissions**: start with `Metadata: read`.
 - **Webhook**: disabled; this app does not consume webhooks.
 - **Where can this GitHub App be installed?**: choose `Any account` if other people will test it.
-- For a small beta, you can opt out of **User-to-server token expiration**. The app also supports refresh tokens if you keep expiration enabled.
+- Keep **User-to-server token expiration** enabled; the app supports refreshing expiring tokens.
+
+Use the same host in your browser, `.env`, and GitHub App callback setting. The example above uses `127.0.0.1`; replace the `localhost` callback in the copied `.env.example` accordingly.
 
 ### 5. Run
 
@@ -181,7 +145,7 @@ Open <http://127.0.0.1:8080>, connect GitHub, and sync your Stars.
 
 ---
 
-## ☁️ Docker deployment
+## Deployment
 
 The repository includes a single-host deployment: the app, Redis, and Caddy (automatic HTTPS).
 
@@ -219,12 +183,12 @@ More detail: [DEPLOYMENT.md](DEPLOYMENT.md).
 
 ---
 
-## 🧭 Usage
+## Usage
 
 1. Open the home page and choose **Connect GitHub**.
 2. Authorize the GitHub App and wait for the star sync to finish.
 3. LookingFor automatically starts an interest analysis; if it fails, use **Analyze interests** to retry.
-4. Open **Explore** to see recommendations. Use **Continue to the next batch** to fetch more results.
+4. Open **Explore** to browse matching repositories. Use **Continue to the next batch** to fetch more results.
 5. Use the **中文 / EN** switch in the header to change the interface language.
 
 Important routes:
@@ -234,7 +198,7 @@ Important routes:
 | `/` | Home |
 | `/stars` | Synced stars |
 | `/analyse` | Start or inspect analysis |
-| `/search` | Explore recommendations |
+| `/search` | Explore matching repositories |
 | `/privacy` | Data and privacy explanation |
 | `/account/delete` | Delete the current user's data |
 | `/auth/logout` | Sign out |
@@ -242,7 +206,7 @@ Important routes:
 
 ---
 
-## ⚙️ Configuration
+## Configuration
 
 | Variable | Required | Description |
 |---|---|---|
@@ -260,136 +224,105 @@ Important routes:
 | `BACKUP_DIR` | No | Backup directory for `scripts/backup_db.py` |
 | `NICEGUI_REDIS_URL` | No | Optional Redis-backed session storage |
 
-Never commit `.env`, `lookingfor.db`, `.nicegui`, or API keys.
+Keep `.env`, SQLite databases (including WAL files), `.nicegui`, backups, and API keys out of Git.
 
 ---
 
-## 🔍 How analysis and search behave
+## Data and privacy
 
-- Repository fields are compacted before sending them to the model: description up to 300 characters, up to 8 topics at 40 characters each, compact JSON.
-- Each model batch is kept under 120,000 characters. Up to 6 batches are allowed; beyond that, a representative sample of about 600 repositories is used.
-- The first model attempt uses `max_tokens=8192` with thinking enabled. If the response is empty or not valid JSON, the app retries with thinking disabled, then with `max_tokens=16384`.
-- Search keywords are capped at 80. They are grouped into queries of at most 4 keywords.
-- GitHub search returns at most 1,000 results and pages up to 100; the UI reports when a limit is reached.
-- Redis caches public search results for 6 hours and coordinates single-flight fetches and rate limits.
-- Analysis limits: 60-second cooldown, 10 attempts per 24 hours per user, and 2 active jobs globally. Attempts are recorded even when the model fails.
+- SQLite stores each user's GitHub identity, a Stars snapshot, and generated search keywords, scoped by GitHub user ID.
+- GitHub access and refresh tokens are held server-side in NiceGUI session storage, not rendered into the page.
+- DeepSeek receives selected repository metadata: names, descriptions, language, topics, URLs, and fork counts, plus language/topic counts. Repository names and URLs may identify their owners; the payload does not include the GitHub token or a separate user email field.
+- Redis shares cached **public** search results across users. User Stars and personalized analyses remain separate.
+- `/privacy` explains data handling; `/account/delete` deletes the current user's stored account data. Backups have a separate retention lifecycle; see the [deployment guide](DEPLOYMENT.md).
+- **Beta limitation:** access and refresh tokens are not encrypted at rest. Restrict access to session storage and backups. Encryption and additional model-spend controls remain release work.
 
----
+## Architecture
 
-## 🔐 Data and privacy
+The app is a single Python service with NiceGUI for the UI, SQLite for per-user data, and Redis for search caching and request coordination.
 
-- Each user has a row in SQLite plus a star snapshot and one analysis result.
-- GitHub tokens are stored server-side in NiceGUI session storage; they are never sent to the browser page.
-- The model receives repository metadata (name, description, language, topics, URL, fork count) — not the GitHub token, login, or email.
-- Search cache contains public repository results only.
-- Users can sign out, read `/privacy`, and delete their data at `/account/delete`.
-- **Beta limitation:** session tokens are stored unencrypted at rest. Restrict access to the server and session storage; encryption is planned before a public launch.
+```mermaid
+flowchart LR
+    Browser[Browser] --> Caddy["Caddy / HTTPS in deployment"]
+    Caddy --> App["NiceGUI / Python"]
+    App --> DB[("SQLite: users, Stars, keywords, jobs")]
+    App --> Redis[("Redis: public search cache, locks, limits")]
+    App --> GitHub["GitHub: OAuth, Stars, Search"]
+    App --> DeepSeek["DeepSeek: interest analysis"]
+```
 
----
+Analysis runs in a background job within the app process. Closing or refreshing a browser page does not cancel it; requests for the same user's current analysis join the running job. This does not make jobs durable across a server restart.
 
-## 🧪 Tests
+<details>
+<summary>Current processing limits and defaults</summary>
+
+- Model input is compacted: descriptions up to 300 characters and up to 8 topics of 40 characters each.
+- Input is split into batches of at most 120,000 characters. If it would exceed 6 batches, representative sampling reduces the input to at most 600 repositories, potentially fewer to fit the budget.
+- Each batch can make up to 3 model attempts: thinking enabled with an 8,192-token output budget, then without thinking at 8,192 and 16,384 if content is empty or invalid JSON. **Six input batches are not a six-request cost cap.**
+- At most 80 keywords are retained. Queries normally group up to 4 keywords with `OR` and restrict results to public repositories.
+- GitHub search requests 10 results per page and can retrieve at most 1,000 results per query. “Continue” advances existing queries; it does not generate an unlimited supply of new queries.
+- Public search pages are cached for 6 hours. Redis coordinates duplicate fetches and a per-user request limit, and honors GitHub cooldown responses.
+- Analysis defaults: 60-second cooldown, 10 attempts per 24 hours per user, and 2 active jobs globally. Failed analyses count toward the attempt limit.
+- Supported deployment is one app instance. Shared Redis alone does not make SQLite, sessions, and in-process jobs a horizontally scaled service.
+
+</details>
+
+## Tests
 
 ```bash
 python3 -m unittest discover -s tests
 ```
 
-The suite covers OAuth/session behavior, analysis deduplication and batching, input compaction, token fallback, SQLite deletion/backups, Redis search protection, and discovery pagination. It makes no real GitHub or DeepSeek requests.
+The suite covers account/session behavior, analysis jobs and batching, input compaction, model-response fallback, SQLite deletion/backups, Redis search protection, and discovery pagination. External GitHub and DeepSeek calls are mocked. These are correctness tests, **not an evaluation of recommendation quality**.
 
----
+## Project structure
 
-## 📁 Project structure
+| File | Responsibility |
+|---|---|
+| [main.py](main.py) | Routes, OAuth, Star sync, analysis/search orchestration, health check |
+| [views.py](views.py), [styles.css](styles.css), [i18n.py](i18n.py) | Repository browser, styling, Chinese/English UI |
+| [analyse.py](analyse.py) | Input compaction, model calls, keyword extraction |
+| [analysis_jobs.py](analysis_jobs.py) | Background jobs, leases, duplicate-analysis protection |
+| [database.py](database.py) | Per-user SQLite data, analysis limits, deletion, backups |
+| [search.py](search.py) | GitHub queries and public-repository filtering |
+| [search_guard.py](search_guard.py) | Redis page cache, request locks, rate limiting |
+| [discovery.py](discovery.py) | Query pagination, merging, browsing batches |
+| [scripts/backup_db.py](scripts/backup_db.py) | Online SQLite backup with retention |
+| [tests/](tests/) | Automated correctness tests |
+| [DEPLOYMENT.md](DEPLOYMENT.md) | Docker, Caddy, operations, and backup instructions |
 
-```text
-main.py             Routes, OAuth, analysis UI, search UI, health check
-views.py            Reusable UI components and repository browser
-i18n.py             Chinese/English UI helper
-analyse.py          Input compaction, batching, DeepSeek calls, keyword extraction
-analysis_jobs.py    Background analysis job, lease heartbeat, deduplication
-database.py         SQLite schema, per-user data, analysis attempts, backups
-search.py           GitHub search requests and public-repository filtering
-search_guard.py     Redis cache, single-flight lock, rate limiter, cooldown
-discovery.py        Batch/page rotation for “continue discovering”
-scripts/backup_db.py  Online SQLite backup with retention
-tests/              Unit tests (62)
-DEPLOYMENT.md       Single-host deployment notes
-Dockerfile          App image
-docker-compose.yml  App + Redis + Caddy
-Caddyfile           Automatic HTTPS reverse proxy
-```
+## Roadmap
 
----
+These are planned changes, not current features or measured results.
 
-## 🗺️ Roadmap / known gaps
+- [ ] Establish a small, human-reviewed evaluation set and record the current ranking as a baseline.
+- [ ] Preserve structured interests and verified supporting repositories, instead of keeping only keywords.
+- [ ] Add retrieval channels alongside the existing Star-sorted search to test broader candidate coverage.
+- [ ] Rank candidates by relevance and diversify the results while keeping already-starred projects eligible.
+- [ ] Show recommendation reasons supported by actual repository metadata.
+- [ ] Gather optional feedback about relevance and rediscovery value.
+- [ ] Encrypt stored GitHub tokens and add beta access controls and model-spend monitoring.
 
-- [ ] Add a beta allowlist to control model spend before sharing the link broadly.
-- [ ] Encrypt GitHub tokens and refresh tokens at rest.
-- [ ] Add a real allowlist / invitation flow and usage budget alerts.
+## Contributing
 
----
+Useful contributions include reproducible search problems, evaluation cases, query strategies, ranking experiments, and documentation fixes.
 
-## 📜 License
+For a discovery-quality issue, include the interest you expected, the visible query keywords, an unsuitable public result, and an example of a more useful repository. If you have no Stars or receive no results, report that too. Do not attach tokens, `.env`, session files, or private repository metadata.
 
-MIT © 2026 Haoning Xu. See [LICENSE](LICENSE).
-
----
+[Open an issue](https://github.com/Xander-26Code/LookingFor/issues). For code changes, explain the behavior and run the test suite. For ranking changes, include a comparison with the current baseline; a different result list alone does not establish an improvement.
 
 ## 中文说明
 
-**LookingFor 是一个从你的 GitHub Stars 出发、用 AI 帮你重新发现和继续发现开源仓库的工具。**
+**LookingFor 从你的 GitHub Stars 提炼兴趣关键词，帮助你继续探索相关仓库，也重新发现忘记收藏过的项目。**
 
-### 演示
+- [在线 beta](https://repofind.click) 需要 GitHub 登录及非空 Stars 列表；无需登录即可观看上方演示。
+- 登录后同步收藏，分析兴趣，再分批浏览结果；可以按语言和文本筛选已加载的仓库。
+- 已 Star 的仓库会保留并标记。“New”只代表本次浏览最新批次新增，不代表你从未见过。
+- 当前个性化主要体现在搜索词。候选仍按 Star 数检索，批内按收集的查询词数量和 Star 数排序；还没有经过评估的个性化重排算法。
+- “匹配关键词”目前表示仓库来自哪些查询组，不能证明它命中了组内每个关键词。兴趣证据保留、真实相关性排序、多样性和评估属于下一阶段。
+- 自部署需要 Python、Redis、GitHub App 和 DeepSeek API Key，具体见 [Quick start](#quick-start) 与 [部署文档](DEPLOYMENT.md)。
+- 仓库元数据会发送给 DeepSeek；GitHub token 保存在服务端，但目前没有静态加密。项目目前支持单实例部署。
 
-上方 GIF 展示了搜索、分批和“新发现”标记；完整 25 秒视频见 [assets/readme/demo.mp4](assets/readme/demo.mp4)。网页右上角可以切换 `中文 / EN`。
+## License
 
-### 它做什么
-
-1. 用 GitHub 登录；
-2. 同步你收藏的 Stars；
-3. 让 DeepSeek 从仓库描述、语言、topics 中提炼兴趣关键词；
-4. 按关键词搜索 GitHub 公开仓库；
-5. 用“继续发现下一批”不断追加新结果，并标出本次新增。
-
-### 本地运行
-
-```bash
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-cp .env.example .env
-# 填写 GitHub App、DeepSeek、Redis 配置
-python3 main.py
-```
-
-打开 <http://127.0.0.1:8080>。
-
-### 线上部署
-
-项目自带 `Dockerfile`、`docker-compose.yml` 和 `Caddyfile`：
-
-```bash
-cp .env.example .env
-# 填写生产配置，包括 DOMAIN
-docker compose up -d --build
-```
-
-详细步骤见 [DEPLOYMENT.md](DEPLOYMENT.md)。
-
-### 当前限制
-
-- 单实例部署，SQLite 不适合直接水平扩展；
-- beta 阶段的 token 尚未加密存储；
-- 还没有内测白名单，公开链接前建议先加；
-- 已切换到正式域名 `repofind.click`，HTTPS 由 Caddy + Let’s Encrypt 管理；
-- 采用 MIT License，见 [LICENSE](LICENSE)。
-
-### 测试
-
-```bash
-python3 -m unittest discover -s tests
-```
-
-当前 62 个测试通过，不访问真实 GitHub 或 DeepSeek API。
-
----
-
-Built with curiosity, NiceGUI, SQLite, Redis, GitHub, and DeepSeek.
+MIT © 2026 Haoning Xu. See [LICENSE](LICENSE).
