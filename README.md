@@ -295,6 +295,8 @@ The suite covers account/session behavior, analysis jobs and batching, input com
 
 These are planned changes, not current features or measured results.
 
+The [recommendation improvement plan](docs/RECOMMENDATION_PLAN.md) (中文) documents the code findings, staged implementation, evaluation method, and acceptance criteria.
+
 - [ ] Establish a small, human-reviewed evaluation set and record the current ranking as a baseline.
 - [ ] Preserve structured interests and verified supporting repositories, instead of keeping only keywords.
 - [ ] Add retrieval channels alongside the existing Star-sorted search to test broader candidate coverage.
@@ -320,6 +322,7 @@ For a discovery-quality issue, include the interest you expected, the visible qu
 - 已 Star 的仓库会保留并标记。“New”只代表本次浏览最新批次新增，不代表你从未见过。
 - 当前个性化主要体现在搜索词。候选仍按 Star 数检索，批内按收集的查询词数量和 Star 数排序；还没有经过评估的个性化重排算法。
 - “匹配关键词”目前表示仓库来自哪些查询组，不能证明它命中了组内每个关键词。兴趣证据保留、真实相关性排序、多样性和评估属于下一阶段。
+- 实施顺序、涉及文件与验收标准见[推荐算法优化计划](docs/RECOMMENDATION_PLAN.md)。
 - 自部署需要 Python、Redis、GitHub App 和 DeepSeek API Key，具体见 [Quick start](#quick-start) 与 [部署文档](DEPLOYMENT.md)。
 - 仓库元数据会发送给 DeepSeek；GitHub token 保存在服务端，但目前没有静态加密。项目目前支持单实例部署。
 
