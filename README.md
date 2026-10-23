@@ -15,14 +15,14 @@
 </div>
 
 <div align="center">
-  <a href="https://47-79-237-57.sslip.io"><strong>Live beta</strong></a>
+  <a href="https://repofind.click"><strong>Live beta</strong></a>
   ·
   <a href="DEPLOYMENT.md">Deployment guide</a>
   ·
   <a href="#中文说明">中文说明</a>
 </div>
 
-> The live URL is a temporary beta address. A custom domain is planned.
+> Live beta: [repofind.click](https://repofind.click). HTTPS is managed by Caddy and Let’s Encrypt.
 
 ---
 
@@ -323,7 +323,6 @@ Caddyfile           Automatic HTTPS reverse proxy
 
 - [ ] Add a beta allowlist to control model spend before sharing the link broadly.
 - [ ] Encrypt GitHub tokens and refresh tokens at rest.
-- [ ] Switch the live demo from the temporary `sslip.io` address to `repofind.click`.
 - [ ] Add a real allowlist / invitation flow and usage budget alerts.
 
 ---
@@ -380,7 +379,7 @@ docker compose up -d --build
 - 单实例部署，SQLite 不适合直接水平扩展；
 - beta 阶段的 token 尚未加密存储；
 - 还没有内测白名单，公开链接前建议先加；
-- 域名 `repofind.click` 还在实名/解析流程中，目前使用临时 `sslip.io` 地址；
+- 已切换到正式域名 `repofind.click`，HTTPS 由 Caddy + Let’s Encrypt 管理；
 - 采用 MIT License，见 [LICENSE](LICENSE)。
 
 ### 测试
